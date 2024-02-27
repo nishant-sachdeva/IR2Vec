@@ -1,0 +1,23 @@
+<map id="models.Model.model" name="models.Model.model">
+<area shape="rect" id="Node000001" title=" " alt="" coords="162,203,301,228"/>
+<area shape="rect" id="Node000003" href="$classmodels_1_1Analogy_1_1Analogy.html" title=" " alt="" coords="355,5,516,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="241,187,257,153,281,114,311,74,347,40,367,29,370,34,351,44,315,77,285,117,262,156,246,190"/>
+<area shape="rect" id="Node000004" href="$classmodels_1_1ComplEx_1_1ComplEx.html" title=" " alt="" coords="350,55,521,80"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="248,188,290,138,317,112,348,89,370,78,373,83,350,94,321,116,294,141,252,191"/>
+<area shape="rect" id="Node000005" href="$classmodels_1_1DistMult_1_1DistMult.html" title=" " alt="" coords="353,104,518,130"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="261,191,301,164,348,138,377,128,378,133,350,143,304,168,263,195"/>
+<area shape="rect" id="Node000006" href="$classmodels_1_1HolE_1_1HolE.html" title=" " alt="" coords="373,153,498,179"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="302,196,379,177,380,182,303,201"/>
+<area shape="rect" id="Node000007" href="$classmodels_1_1RESCAL_1_1RESCAL.html" title=" " alt="" coords="349,203,522,228"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="317,213,349,213,349,218,317,218"/>
+<area shape="rect" id="Node000008" href="$classmodels_1_1TransD_1_1TransD.html" title=" " alt="" coords="359,252,512,278"/>
+<area shape="poly" id="edge7_Node000001_Node000008" title=" " alt="" coords="303,230,380,249,379,254,302,235"/>
+<area shape="rect" id="Node000009" href="$classmodels_1_1TransE_1_1TransE.html" title=" " alt="" coords="360,301,511,327"/>
+<area shape="poly" id="edge8_Node000001_Node000009" title=" " alt="" coords="263,236,304,263,350,288,378,298,377,303,348,293,301,267,261,240"/>
+<area shape="rect" id="Node000010" href="$classmodels_1_1TransH_1_1TransH.html" title=" " alt="" coords="358,351,513,376"/>
+<area shape="poly" id="edge9_Node000001_Node000010" title=" " alt="" coords="252,240,294,290,321,315,350,337,373,348,370,353,348,342,317,319,290,293,248,243"/>
+<area shape="rect" id="Node000011" href="$classmodels_1_1TransR_1_1TransR.html" title=" " alt="" coords="359,400,512,426"/>
+<area shape="poly" id="edge10_Node000001_Node000011" title=" " alt="" coords="246,241,262,275,285,314,315,354,351,387,370,397,367,402,347,391,311,357,281,317,257,278,241,244"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,203,114,228"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="129,213,162,213,162,218,129,218"/>
+</map>

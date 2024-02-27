@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['package_20ir2vec_20wheels_0',['Using Python package (IR2Vec-Wheels)',['../md_README.html#autotoc_md38',1,'']]],
+  ['pair_1',['Pair',['../classPair.html',1,'']]],
+  ['parameter_2',['Parameter',['../structParameter.html',1,'']]],
+  ['parameters_20for_20training_3',['Step 2: Set configure parameters for training.',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md57',1,'']]],
+  ['point_4',['Point',['../structPoint.html',1,'']]],
+  ['predict_20head_20entity_5',['Predict Head Entity',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md63',1,'']]],
+  ['predict_20relation_6',['Predict Relation',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md65',1,'']]],
+  ['predict_20tail_20entity_7',['Predict Tail Entity',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md64',1,'']]],
+  ['predict_20triple_8',['Predict triple',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md66',1,'']]],
+  ['predict_5fhead_5fentity_9',['predict_head_entity',['../classconfig_1_1Config_1_1Config.html#a2c5d92ea9d9564664c3b714eda130af6',1,'config::Config::Config']]],
+  ['predict_5frelation_10',['predict_relation',['../classconfig_1_1Config_1_1Config.html#ae62cbbda4e14c700057d4a2db35497ff',1,'config::Config::Config']]],
+  ['predict_5ftail_5fentity_11',['predict_tail_entity',['../classconfig_1_1Config_1_1Config.html#ab2ab958e069b4f5171e74225fbaeba43',1,'config::Config::Config']]],
+  ['predict_5ftriple_12',['predict_triple',['../classconfig_1_1Config_1_1Config.html#a255cd4afdcf31bf25e23699086788f40',1,'config::Config::Config']]],
+  ['prediction_13',['Link Prediction',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md61',1,'']]],
+  ['preprocesing_20the_20data_14',['Preprocesing the data',['../md_docs_2version__upgrade__process.html#autotoc_md7',1,'']]],
+  ['preprocess_15',['preprocess',['../namespacepreprocess.html',1,'']]],
+  ['preprocessing_20the_20triplets_16',['Preprocessing the triplets',['../md_seed__embeddings_2README.html#autotoc_md80',1,'']]],
+  ['pretrained_20embeddings_17',['Pretrained Embeddings',['../md_seed__embeddings_2README.html',1,'']]],
+  ['program_20representations_18',['Generating program representations',['../md_README.html#autotoc_md32',1,'']]],
+  ['pushing_20commits_19',['Pushing commits',['../md_docs_2version__upgrade__process.html#autotoc_md12',1,'']]],
+  ['python_20',['Python',['../md_README.html#autotoc_md28',1,'']]],
+  ['python_20package_20ir2vec_20wheels_21',['Using Python package (IR2Vec-Wheels)',['../md_README.html#autotoc_md38',1,'']]]
+];
