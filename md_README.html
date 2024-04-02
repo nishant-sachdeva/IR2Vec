@@ -190,7 +190,7 @@ Building from source</h1>
 <li><code>cd ../</code></li>
 </ol>
 </li>
-<li><code>cmake -DLT_LLVM_INSTALL_DIR=&lt;path_to_LLVM_build_dir&gt; -DEigen3_DIR=&lt;path_to_eigen_build_dir&gt; [-DCMAKE_INSTALL_PREFIX=&lt;install_dir&gt;] ../src</code></li>
+<li><code>cmake -DLT_LLVM_INSTALL_DIR=&lt;path_to_LLVM_build_dir&gt; -DEigen3_DIR=&lt;path_to_eigen_build_dir&gt; [-DCMAKE_INSTALL_PREFIX=&lt;install_dir&gt;] ..</code></li>
 <li><code>make [&amp;&amp; make install]</code></li>
 </ol>
 <p>This process would generate <code>ir2vec</code> binary under <code>build/bin</code> directory, <code>libIR2Vec.a</code> and <code>libIR2Vec.so</code> under <code>build/lib</code> directory.</p>
