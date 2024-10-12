@@ -47,11 +47,13 @@ void IR2Vec_FA::getTransitiveUse(
     if (auto use = dyn_cast<Instruction>(U)) {
       if (std::find(visitedList.begin(), visitedList.end(), use) ==
           visitedList.end()) {
+        std::cout << "Found dependency - " << use->getOpcodeName() << " ON "
+                    << def->getOpcodeName() << std::endl;
         if (isMemOp(use->getOpcodeName(), operandNum, memWriteOps) &&
             use->getOperand(operandNum) == def) {
           writeDefsMap[root].push_back(use);
-          std::cout << "Found dependency - " << use->getOpcodeName() << " ON "
-                    << root->getOpcodeName() << std::endl;
+          // std::cout << "Found dependency - " << use->getOpcodeName() << " ON "
+          //           << def->getOpcodeName() << std::endl;
         } else if (isMemOp(use->getOpcodeName(), operandNum, memAccessOps) &&
                    use->getOperand(operandNum) == def) {
           getTransitiveUse(root, use, visitedList, toAppend);

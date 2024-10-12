@@ -74,11 +74,6 @@ if(NOT LLVM_IR2VEC)
   message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
   include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
-  find_package(Clang 17.0.0 REQUIRED CONFIG)
-  message(STATUS "Found Clang ${CLANG_PACKAGE_VERSION}")
-  message(STATUS "Using ClangConfig.cmake in: ${CLANG_DIR}")
-  include_directories(SYSTEM ${CLANG_INCLUDE_DIRS})
-
   # llvm_map_components_to_libnames(llvm_libs all)
   # llvm_map_components_to_libnames(llvm_libs support core irreader analysis TransformUtils)
 
@@ -86,31 +81,6 @@ if(NOT LLVM_IR2VEC)
   target_link_libraries (
     ${PROJECT_NAME}
     PRIVATE
-    clangHandleCXX
-    clangFormat
-    clangIndex
-    clangDirectoryWatcher
-    clangFrontendTool
-    clangRewrite
-    clangCrossTU
-    clangASTMatchers
-    clangTooling
-    clangBasic
-    clangFrontend
-    clangDriver
-    clangSema
-    clangAST
-    clangCodeGen
-    clangSerialization
-    clangParse
-    clangStaticAnalyzerFrontend
-    clangStaticAnalyzerCheckers
-    clangStaticAnalyzerCore
-    clangAnalysis
-    clangARCMigrate
-    clangRewriteFrontend
-    clangEdit
-    clangLex
     LLVM
     objlib
   )
