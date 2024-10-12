@@ -22,24 +22,6 @@
 #include <llvm/Support/MemoryBuffer.h>
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
-
-#include <clang/ASTMatchers/ASTMatchers.h>
-#include <clang/CodeGen/CodeGenAction.h>
-#include <clang/Frontend/CompilerInstance.h>
-#include <clang/Frontend/CompilerInvocation.h>
-#include <clang/Frontend/FrontendActions.h>
-#include <clang/Rewrite/Core/Rewriter.h>
-#include <clang/Tooling/Tooling.h>
-
-#include "clang/Driver/Compilation.h"
-#include "clang/Driver/Driver.h"
-#include "clang/Driver/Tool.h"
-
-#include <clang/Basic/DiagnosticOptions.h>
-#include <clang/Frontend/TextDiagnosticPrinter.h>
-#include <llvm/ADT/IntrusiveRefCntPtr.h>
-
-#include <clang/Lex/PreprocessorOptions.h>
 #include <llvm/Option/Option.h>
 
 #include <cxxabi.h>
@@ -74,17 +56,9 @@ extern float WO;
 extern float WA;
 extern float WT;
 extern bool debug;
-<<<<<<< HEAD
 extern unsigned DIM;
-=======
-extern bool cpp_input;
 extern bool memdep;
-extern std::map<std::string, Vector> opcMap;
-std::unique_ptr<llvm::Module> readCPPtoIR(const char *FileName);
->>>>>>> changing ir2vec.cpp file skeleton
 std::unique_ptr<llvm::Module> getLLVMIR();
-// std::unique_ptr<llvm::Module> readCPP();
-std::unique_ptr<llvm::Module> readIR();
 void scaleVector(Vector &vec, float factor);
 // newly added
 std::string getDemagledName(const llvm::Function *function);

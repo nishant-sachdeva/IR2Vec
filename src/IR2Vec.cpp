@@ -53,11 +53,6 @@ cl::opt<std::string> cl_iname(cl::Positional, cl::desc("Input file path"),
 cl::opt<unsigned> cl_dim("dim", cl::Optional, cl::init(300),
                          cl::desc("Dimension of the embeddings"),
                          cl::cat(category));
-
-cl::opt<bool> cl_cpp("cpp", cl::Optional,
-                     cl::desc("Input file is a .cpp file?"), cl::init(false),
-                     cl::cat(category));
-
 cl::opt<bool> cl_memdep("memdep", cl::Optional,
                         cl::desc("Running mem dep analysis on input .ll file"),
                         cl::init(false), cl::cat(category));
@@ -97,7 +92,9 @@ void printVersion(raw_ostream &ostream) {
 
 void generateSymEncodingsFunction(std::string funcName) {
   auto M = getLLVMIR();
-  IR2Vec_Symbolic SYM(*M);
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+  IR2Vec_Symbolic SYM(*M, vocabulary);
   std::ofstream o;
   o.open(oname, std::ios_base::app);
   if (printTime) {
@@ -117,7 +114,9 @@ void generateSymEncodingsFunction(std::string funcName) {
 
 void generateFAEncodingsFunction(std::string funcName) {
   auto M = getLLVMIR();
-  IR2Vec_FA FA(*M);
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+  IR2Vec_FA FA(*M, vocabulary);
   std::ofstream o, missCount, cyclicCount;
   o.open(oname, std::ios_base::app);
   missCount.open("missCount_" + oname, std::ios_base::app);
@@ -141,7 +140,9 @@ void generateFAEncodingsFunction(std::string funcName) {
 
 void generateFAEncodings() {
   auto M = getLLVMIR();
-  IR2Vec_FA FA(*M);
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+  IR2Vec_FA FA(*M, vocabulary);
   std::ofstream o, missCount, cyclicCount;
   o.open(oname, std::ios_base::app);
   missCount.open("missCount_" + oname, std::ios_base::app);
@@ -163,7 +164,9 @@ void generateFAEncodings() {
 
 void generateSYMEncodings() {
   auto M = getLLVMIR();
-  IR2Vec_Symbolic SYM(*M);
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+  IR2Vec_Symbolic SYM(*M, vocabulary);
   std::ofstream o;
   o.open(oname, std::ios_base::app);
   if (printTime) {
@@ -207,7 +210,6 @@ void setGlobalVars(int argc, char **argv) {
   WT = cl_WT;
   debug = cl_debug;
   printTime = cl_printTime;
-  cpp_input = cl_cpp;
   memdep = cl_memdep;
 }
 
@@ -314,106 +316,6 @@ void runMDA() {
   checkModuleFunctions(*M);
 }
 
-// bool check_file(std::string filename) {
-//   std::ifstream file(filename);
-//   return file.good();
-// }
-
-// using namespace clang;
-// void generateLLVMIR(const std::string &cppFilePath) {
-//     // Initialize targets
-//     InitializeNativeTarget();
-//     InitializeNativeTargetAsmPrinter();
-
-//     // Create the compiler instance
-//     CompilerInstance compiler;
-//     llvm::LLVMContext context;
-// // Diagnostics
-//     auto diagOpts = std::make_shared<DiagnosticOptions>();
-//     auto diagID = new DiagnosticIDs();
-//     auto diagClient = new TextDiagnosticPrinter(llvm::errs(), &*diagOpts);
-//     DiagnosticsEngine diags(diagID, &*diagOpts, diagClient);
-
-//     // Create the driver
-//     std::string tripleStr = llvm::sys::getDefaultTargetTriple();
-//     driver::Driver driver("clang", tripleStr, diags);
-
-//     // Build the compilation
-//     std::vector<const char *> args = {
-//         "clang",           // Dummy executable name
-//         "-emit-llvm",
-//         "-O0",
-//         "-c",
-//         cppFilePath.c_str()
-//     };
-
-//     std::unique_ptr<driver::Compilation>
-//     compilation(driver.BuildCompilation(args)); if (!compilation) {
-//         std::cerr << "Error building compilation" << std::endl;
-//         return;
-//     }
-
-//     const driver::JobList &jobs = compilation->getJobs();
-//     if (jobs.size() != 1) {
-//         std::cerr << "Expected a single job, but got " << jobs.size() <<
-//         std::endl; return;
-//     }
-
-//     const driver::Command &cmd = llvm::cast<driver::Command>(*jobs.begin());
-
-//     // Create compiler invocation from the job's arguments
-//     std::shared_ptr<CompilerInvocation> invocation =
-//     std::make_shared<CompilerInvocation>();
-//     CompilerInvocation::CreateFromArgs(*invocation, cmd.getArguments(),
-//     diags); compiler.setInvocation(invocation);
-
-//     // Set up the target options (this part can be expanded for
-//     cross-compilation) compiler.getTargetOpts().Triple =
-//     llvm::sys::getDefaultTargetTriple();
-
-//     // Create and execute the action (generating LLVM IR)
-//     auto codeGenAction = std::make_unique<EmitLLVMOnlyAction>(&context);
-
-//     if (!compiler.ExecuteAction(*codeGenAction)) {
-//         std::cerr << "Error generating LLVM IR" << std::endl;
-//         return;
-//     }
-
-//     // Get the generated LLVM module
-//     std::unique_ptr<llvm::Module> module = codeGenAction->takeModule();
-//     if (!module) {
-//         std::cerr << "Error: Failed to take LLVM module" << std::endl;
-//         return;
-//     }
-
-//     // Output the LLVM IR to a file or stdout
-//     std::error_code EC;
-//     llvm::raw_fd_ostream output("output.ll", EC, llvm::sys::fs::OF_None);
-//     if (EC) {
-//         std::cerr << "Error: " << EC.message() << std::endl;
-//         return;
-//     }
-
-//     module->print(output, nullptr);
-//     std::cout << "LLVM IR has been generated and saved to output.ll" <<
-//     std::endl;
-// }
-
-// void writeModuleToFile(llvm::Module *M, const std::string &filename) {
-//     std::error_code EC;
-//     llvm::raw_fd_ostream OS(filename, EC, llvm::sys::fs::OF_TextWithCRLF);
-
-//     if (EC) {
-//         llvm::errs() << "Could not open file: " << EC.message() << "\n";
-//         return;
-//     }
-
-//     M->print(OS, nullptr);  // Use the print function to write the LLVM IR in
-//     text form OS.flush();
-// }
-
-
-
 int main(int argc, char **argv) {
   cl::SetVersionPrinter(printVersion);
   cl::HideUnrelatedOptions(category);
@@ -441,8 +343,6 @@ int main(int argc, char **argv) {
   //   std::cout << "Error in getModule" << std::endl;
   //   return 0;
   // }
-
-  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
   // // newly added
   if (sym && !(funcName.empty())) {
