@@ -31,6 +31,7 @@ float IR2Vec::WA;
 float IR2Vec::WT;
 bool IR2Vec::debug;
 bool IR2Vec::memdep;
+bool IR2Vec::memssa;
 unsigned IR2Vec::DIM;
 
 std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {
@@ -44,6 +45,21 @@ std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {
   }
 
   return M;
+}
+
+void IR2Vec::printDependency(const llvm::Instruction* use, const llvm::Instruction* def) {
+  std::string useStr, defStr;
+
+  // Create string streams to hold the string representations of the instructions
+  llvm::raw_string_ostream useStream(useStr);
+  llvm::raw_string_ostream defStream(defStr);
+
+  // Print the full instruction to the streams
+  use->print(useStream);
+  def->print(defStream);
+
+  // Output the instructions in the desired format
+  std::cout << useStream.str() << " dependent on " << defStream.str() << std::endl;
 }
 
 void IR2Vec::scaleVector(Vector &vec, float factor) {
