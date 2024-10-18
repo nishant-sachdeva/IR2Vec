@@ -19,12 +19,17 @@
 
 #include "llvm/Support/CommandLine.h"
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
+#include "llvm/Analysis/MemorySSA.h"
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instruction.h>
 #include <llvm/IR/Module.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/raw_ostream.h>
+
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/Support/SourceMgr.h"
 
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h> // For BasicAA
@@ -54,6 +59,10 @@ cl::opt<unsigned> cl_dim("dim", cl::Optional, cl::init(300),
                          cl::desc("Dimension of the embeddings"),
                          cl::cat(category));
 cl::opt<bool> cl_memdep("memdep", cl::Optional,
+                        cl::desc("Running mem dep analysis on input .ll file"),
+                        cl::init(false), cl::cat(category));
+
+cl::opt<bool> cl_memssa("memssa", cl::Optional,
                         cl::desc("Running mem dep analysis on input .ll file"),
                         cl::init(false), cl::cat(category));
 
@@ -211,6 +220,7 @@ void setGlobalVars(int argc, char **argv) {
   debug = cl_debug;
   printTime = cl_printTime;
   memdep = cl_memdep;
+  memssa = cl_memssa;
 }
 
 void checkFailureConditions() {
@@ -242,7 +252,7 @@ void checkFailureConditions() {
     exit(1);
 }
 
-void checkModuleFunctions(llvm::Module &M) {
+void checkMemdepFunctions(llvm::Module &M) {
 
   // std::cout << "MDA: Module loaded successfully " << (M.getName()).data() <<
   // std::endl;
@@ -294,8 +304,7 @@ void checkModuleFunctions(llvm::Module &M) {
             // I.getOpcodeName() << std::endl;
             continue;
           } else {
-            std::cout << "Found Dependency - " << I.getOpcodeName() << " ON "
-                      << memdep.getInst()->getOpcodeName() << std::endl;
+            if(memdep.isDef()) printDependency(&I, memdep.getInst());
           }
         }
       }
@@ -303,6 +312,94 @@ void checkModuleFunctions(llvm::Module &M) {
   }
   // std::cout << "Total functions: " << count << std::endl;
 }
+
+
+void checkMemssaFunctions(llvm::Module &M) {
+
+  std::cout << "MemorySSA: Module loaded successfully " << (M.getName()).data() <<
+  std::endl;
+
+  // std::cout << "Instruction Count " << M.getInstructionCount() << std::endl;
+
+  int count = 0;
+
+  PassBuilder PB;
+  FunctionAnalysisManager FAM;
+
+  // We need to initialize the other pass managers even if we don't directly use
+  // them
+  LoopAnalysisManager LAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  // Register all the passes with the PassBuilder
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.registerFunctionAnalyses(FAM);
+
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // Register required alias analyses and memory dependence analysis
+  FAM.registerPass([] { return MemorySSAAnalysis(); });
+  FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
+
+  // Run the pass on each function in the module
+  for (Function &F : M) {
+      if (!F.isDeclaration()) {
+          // FPM.run(F, FAM);
+            // Get MemorySSA analysis for the function
+          MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+          MSSA.print(errs());
+
+          // Print the memory dependencies for this function
+
+          for (auto &BB : F) {
+            auto memphi = MSSA.getMemoryAccess(&BB);
+
+            if (memphi != nullptr) {
+              std::cout << "MemoryPhi for BB " << BB.getName().data() << std::endl;
+            } else {
+              std::cout << "No MemoryPhi for BB " << BB.getName().data() << std::endl;
+            }
+          }
+      }
+  }
+
+
+  // for (auto &F : M) {
+  //   count += 1;
+  //   if (!F.isDeclaration()) {
+  //     // std::cout << "ENTERING FOR MEMDEPRESULTS" << std::endl;
+  //     // MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F);
+  //     // std::cout << "Analyzing function: " << F.getName() << "\n";
+
+  //     // std::cout << "TESTING FOR MEMDEPRESULTS :: MDR ready" << std::endl;
+  //     // std::cout << "getDefaultBlockScanLimit() "  <<
+  //     // MDR.getDefaultBlockScanLimit() << std::endl;
+
+  //     for (BasicBlock &BB : F) {
+  //       // std::cout << "TESTING FOR MEMDEPRESULTS :: BASIC BLOCK" << std::endl;
+  //       for (Instruction &I : BB) {
+  //         MemoryAccess *MA = MSSA.getMemoryAccess(&I);
+
+  //         // if (MA) {
+  //         //   std::cout << "Instruction: " << I << "\n";
+  //         //   std::cout << "MemoryAccess: " << *MA << "\n";
+
+  //         //   // If the MemoryAccess is a MemoryUseOrDef, get its defining access
+  //         //   if (MemoryUseOrDef *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
+  //         //     MemoryAccess *DefiningAccess = MUOD->getDefiningAccess();
+  //         //     std::cout << "DefiningAccess: " << *DefiningAccess << "\n";
+  //         //   }
+  //         // }
+  //       }
+  //     }
+  //   }
+  // }
+  // std::cout << "Total functions: " << count << std::endl;
+}
+
 
 void runMDA() {
   auto M = getLLVMIR();
@@ -313,7 +410,10 @@ void runMDA() {
     return;
   }
 
-  checkModuleFunctions(*M);
+  if (memdep) checkMemdepFunctions(*M);
+  else if(memssa) checkMemssaFunctions(*M);
+
+  return;
 }
 
 int main(int argc, char **argv) {
@@ -326,7 +426,7 @@ int main(int argc, char **argv) {
 
   // return 0;
 
-  if (memdep) {
+  if (memdep || memssa) {
     runMDA();
     return 0;
   }

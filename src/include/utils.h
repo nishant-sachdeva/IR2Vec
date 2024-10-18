@@ -58,12 +58,14 @@ extern float WT;
 extern bool debug;
 extern unsigned DIM;
 extern bool memdep;
+extern bool memssa;
 std::unique_ptr<llvm::Module> getLLVMIR();
 void scaleVector(Vector &vec, float factor);
 // newly added
 std::string getDemagledName(const llvm::Function *function);
 char *getActualName(llvm::Function *function);
 std::string updatedRes(IR2Vec::Vector tmp, llvm::Function *f, llvm::Module *M);
+void printDependency(const llvm::Instruction* use, const llvm::Instruction* def);
 } // namespace IR2Vec
 
 #endif
