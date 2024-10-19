@@ -62,6 +62,23 @@ void IR2Vec::printDependency(const llvm::Instruction* use, const llvm::Instructi
   std::cout << useStream.str() << " dependent on " << defStream.str() << std::endl;
 }
 
+void IR2Vec::printReachingDefs(const llvm::Instruction *I, llvm::SmallVector<const llvm::Instruction*, 10> RD) {
+  std::string mainInst;
+  llvm::raw_string_ostream iStream(mainInst);
+  I->print(iStream);
+  std::cout << iStream.str() << " dependent on";
+
+  for (auto reachInst : RD) {
+    std::string rInst;
+    llvm::raw_string_ostream rStream(rInst);
+    reachInst->print(rStream);
+
+    std::cout <<  " " << rStream.str();
+  }
+
+  std::cout << std::endl;
+}
+
 void IR2Vec::scaleVector(Vector &vec, float factor) {
   for (unsigned i = 0; i < vec.size(); i++) {
     vec[i] = vec[i] * factor;

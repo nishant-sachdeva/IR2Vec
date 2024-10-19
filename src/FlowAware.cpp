@@ -51,7 +51,7 @@ void IR2Vec_FA::getTransitiveUse(
         if (isMemOp(use->getOpcodeName(), operandNum, memWriteOps) &&
             use->getOperand(operandNum) == def) {
           writeDefsMap[root].push_back(use);
-          printDependency(use, root);
+          // printDependency(use, root);
         } else if (isMemOp(use->getOpcodeName(), operandNum, memAccessOps) &&
                    use->getOperand(operandNum) == def) {
           getTransitiveUse(root, use, visitedList, toAppend);
@@ -389,18 +389,11 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
-  IR2VEC_DEBUG(for (auto &Inst
-                    : instReachingDefsMap) {
+  for (auto &Inst: instReachingDefsMap) {
     auto RD = Inst.second;
-    outs() << "(" << Inst.first << ")";
-    Inst.first->print(outs());
-    outs() << "\n RD : ";
-    for (auto defs : RD) {
-      defs->print(outs());
-      outs() << "(" << defs << ") ";
-    }
-    outs() << "\n";
-  });
+    auto inst = Inst.first;
+    printReachingDefs(inst, RD);
+  }
 
   // one time Reversing instReachingDefsMap to be used to calculate SCCs
   for (auto &I : instReachingDefsMap) {
