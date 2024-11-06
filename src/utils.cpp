@@ -63,6 +63,8 @@ void IR2Vec::printDependency(const llvm::Instruction* use, const llvm::Instructi
 }
 
 void IR2Vec::printReachingDefs(const llvm::Instruction *I, llvm::SmallVector<const llvm::Instruction*, 10> RD) {
+  if (std::string(I->getOpcodeName()) != "load" && std::string(I->getOpcodeName()) != "store") return;
+
   std::string mainInst;
   llvm::raw_string_ostream iStream(mainInst);
   I->print(iStream);

@@ -253,14 +253,6 @@ void checkFailureConditions() {
 }
 
 void checkMemdepFunctions(llvm::Module &M) {
-
-  // std::cout << "MDA: Module loaded successfully " << (M.getName()).data() <<
-  // std::endl;
-
-  // std::cout << "Instruction Count " << M.getInstructionCount() << std::endl;
-
-  int count = 0;
-
   PassBuilder PB;
   FunctionAnalysisManager FAM;
 
@@ -283,10 +275,9 @@ void checkMemdepFunctions(llvm::Module &M) {
   FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
 
   for (auto &F : M) {
-    count += 1;
     if (!F.isDeclaration()) {
       // std::cout << "ENTERING FOR MEMDEPRESULTS" << std::endl;
-      auto &MDR = FAM.getResult<llvm::MemoryDependenceAnalysis>(F);
+      llvm::MemoryDependenceResults &MDR = FAM.getResult<llvm::MemoryDependenceAnalysis>(F);
 
       // std::cout << "TESTING FOR MEMDEPRESULTS :: MDR ready" << std::endl;
       // std::cout << "getDefaultBlockScanLimit() "  <<
@@ -297,20 +288,32 @@ void checkMemdepFunctions(llvm::Module &M) {
         for (Instruction &I : BB) {
           // std::cout << "TESTING FOR MEMDEPRESULTS" << std::endl;
           // Get the memory dependence information for the instruction
+          llvm::SmallVector<const llvm::Instruction*, 10> RD;
+
           MemDepResult memdep = MDR.getDependency(&I);
 
-          if (!memdep.getInst()) {
-            // std::cout << "No memory dependence found for " <<
-            // I.getOpcodeName() << std::endl;
-            continue;
-          } else {
-            if(memdep.isDef()) printDependency(&I, memdep.getInst());
+          if (memdep.isLocal()){
+            auto ins = memdep.getInst();
+            if (ins){RD.push_back(ins);}
+          } else if (memdep.isNonLocal()) {
+            SmallVector<NonLocalDepResult> nonLocalResults;
+            MDR.getNonLocalPointerDependency(&I, nonLocalResults);
+            for(auto res: nonLocalResults) {
+              auto mdr = res.getResult();
+              auto ins = mdr.getInst();
+
+              if (ins) {
+                RD.push_back(ins);
+              }
+            }
           }
+
+          if(RD.size() > 0)
+            printReachingDefs(&I, RD);
         }
       }
     }
   }
-  // std::cout << "Total functions: " << count << std::endl;
 }
 
 
