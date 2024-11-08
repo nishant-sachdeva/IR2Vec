@@ -67,6 +67,10 @@ char *getActualName(llvm::Function *function);
 std::string updatedRes(IR2Vec::Vector tmp, llvm::Function *f, llvm::Module *M);
 void printDependency(const llvm::Instruction* use, const llvm::Instruction* def);
 void printReachingDefs(const llvm::Instruction *I, llvm::SmallVector<const llvm::Instruction*, 10> RD);
+std::string getInstStr(const llvm::Instruction* I);
+bool isLoadorStore(const llvm::Instruction* I);
+bool isLoad(const llvm::Instruction* I);
+bool isStore(const llvm::Instruction* I);
 } // namespace IR2Vec
 
 #endif

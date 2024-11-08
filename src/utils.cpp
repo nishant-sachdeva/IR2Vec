@@ -47,35 +47,37 @@ std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {
   return M;
 }
 
-void IR2Vec::printDependency(const llvm::Instruction* use, const llvm::Instruction* def) {
-  std::string useStr, defStr;
-
-  // Create string streams to hold the string representations of the instructions
+std::string IR2Vec::getInstStr(const llvm::Instruction* inst) {
+  std::string useStr;
   llvm::raw_string_ostream useStream(useStr);
-  llvm::raw_string_ostream defStream(defStr);
 
-  // Print the full instruction to the streams
-  use->print(useStream);
-  def->print(defStream);
+  inst->print(useStream);
+  return useStream.str();
+}
 
-  // Output the instructions in the desired format
-  std::cout << useStream.str() << " dependent on " << defStream.str() << std::endl;
+void IR2Vec::printDependency(const llvm::Instruction* use, const llvm::Instruction* def) {
+  std::cout << IR2Vec::getInstStr(use) << " dependent on " << IR2Vec::getInstStr(def) << std::endl;
+}
+
+bool IR2Vec::isLoad(const llvm::Instruction* I) {
+  return (std::string(I->getOpcodeName()) == "load") ? true : false;
+}
+
+bool IR2Vec::isStore(const llvm::Instruction* I) {
+  return (std::string(I->getOpcodeName()) == "store") ? true : false;
+}
+
+bool IR2Vec::isLoadorStore(const llvm::Instruction* I) {
+  return IR2Vec::isLoad(I) || IR2Vec::isStore(I);
 }
 
 void IR2Vec::printReachingDefs(const llvm::Instruction *I, llvm::SmallVector<const llvm::Instruction*, 10> RD) {
-  if (std::string(I->getOpcodeName()) != "load" && std::string(I->getOpcodeName()) != "store") return;
+  if (!IR2Vec::isLoadorStore(I)) return;
 
-  std::string mainInst;
-  llvm::raw_string_ostream iStream(mainInst);
-  I->print(iStream);
-  std::cout << iStream.str() << " dependent on";
+  std::cout << IR2Vec::getInstStr(I) << " dependent on";
 
   for (auto reachInst : RD) {
-    std::string rInst;
-    llvm::raw_string_ostream rStream(rInst);
-    reachInst->print(rStream);
-
-    std::cout <<  " " << rStream.str();
+    std::cout <<  " " << IR2Vec::getInstStr(reachInst);
   }
 
   std::cout << std::endl;

@@ -288,8 +288,8 @@ void checkMemdepFunctions(llvm::Module &M) {
         for (Instruction &I : BB) {
           // std::cout << "TESTING FOR MEMDEPRESULTS" << std::endl;
           // Get the memory dependence information for the instruction
+          // if (!IR2Vec::isLoadorStore(&I)) continue;
           llvm::SmallVector<const llvm::Instruction*, 10> RD;
-
           MemDepResult memdep = MDR.getDependency(&I);
 
           if (memdep.isLocal()){
@@ -299,17 +299,27 @@ void checkMemdepFunctions(llvm::Module &M) {
             SmallVector<NonLocalDepResult> nonLocalResults;
             MDR.getNonLocalPointerDependency(&I, nonLocalResults);
             for(auto res: nonLocalResults) {
-              auto mdr = res.getResult();
-              auto ins = mdr.getInst();
-
-              if (ins) {
-                RD.push_back(ins);
+              auto ins = res.getResult().getInst();
+              if (ins) RD.push_back(ins);
+            }
+          } else if (memdep.isNonFuncLocal()) {
+            // std::cout << "Using nonFuncLocal section " << IR2Vec::getInstStr(&I) << std::endl;
+            CallBase *CB = dyn_cast<CallBase>(&I);
+            if (CB) {
+              auto nonLocalDepVec = MDR.getNonLocalCallDependency(CB);
+              for(auto vecDep: nonLocalDepVec) {
+                auto ins = vecDep.getResult().getInst();
+                if(ins) RD.push_back(ins);
               }
             }
+          } else if (memdep.isUnknown()) { 
+            // std::cout << "Result is Unknown " << IR2Vec::getInstStr(&I) << std::endl;
+            continue;
           }
 
-          if(RD.size() > 0)
+          if(RD.size() > 0) {
             printReachingDefs(&I, RD);
+          }
         }
       }
     }
