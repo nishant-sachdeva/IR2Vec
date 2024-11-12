@@ -266,7 +266,7 @@ void getInstORCallPopulate(
     auto depIns = memdep->getInst();
 
     if (depIns && !IR2Vec::isLoad(depIns)) {
-      std::cout << "\t" << IR2Vec::getInstStr(depIns);
+      // std::cout << "\t" << IR2Vec::getInstStr(depIns);
       RD->push_back(depIns);
     } else {
       populateReachingDefs(depIns, MDR, RD);
@@ -288,39 +288,39 @@ void populateReachingDefs(
   llvm::MemoryDependenceResults* MDR, 
   llvm::SmallVector<const llvm::Instruction*, 10>* RD
 ) {
-  std::cout << "\t" << IR2Vec::getInstStr(inst);
+  // std::cout << "\t" << IR2Vec::getInstStr(inst);
   MemDepResult memdep = MDR->getDependency(inst);
   if (memdep.isLocal()){
-    std::cout << "\t> local " << isDefOrClobber(&memdep) << "\t";
+    // std::cout << "\t> local " << isDefOrClobber(&memdep) << "\t";
     getInstORCallPopulate(&memdep, MDR, RD);
   } else if (memdep.isNonLocal()) {
-    std::cout << "\t> non-local \n\t\t";
+    // std::cout << "\t> non-local \n\t\t";
     SmallVector<NonLocalDepResult> nonLocalResults;
     MDR->getNonLocalPointerDependency(inst, nonLocalResults);
     for(auto res: nonLocalResults) {
       auto localmemdep = res.getResult();
-      std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
+      // std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
       getInstORCallPopulate(&localmemdep, MDR, RD);
-      std::cout << "\n\t\t";
+      // std::cout << "\n\t\t";
     }
   } else if (memdep.isNonFuncLocal()) {
-    std::cout << "\t> non-func-local \n\t\t";
+    // std::cout << "\t> non-func-local \n\t\t";
     CallBase *CB = dyn_cast<CallBase>(inst);
     if (CB) {
       auto nonLocalDepVec = MDR->getNonLocalCallDependency(CB);
       for(auto vecDep: nonLocalDepVec) {
         auto localmemdep = vecDep.getResult();
-        std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
+        // std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
         getInstORCallPopulate(&localmemdep, MDR, RD);
-        std::cout << "\n\t\t";
+        // std::cout << "\n\t\t";
       }
     }
   } else {
-    std::cout << "\t> unknown";
+    // std::cout << "\t> unknown";
     assert(memdep.isUnknown() && "Unknown memdep result");
   }
 
-  std::cout << "\n";
+  // std::cout << "\n";
 
   return;
 }
@@ -360,23 +360,41 @@ void checkMemdepFunctions(llvm::Module &M) {
         // std::cout << "TESTING FOR MEMDEPRESULTS :: BASIC BLOCK" << std::endl;
         for (Instruction &inst : BB) {
           llvm::SmallVector<const llvm::Instruction*, 10> RD;
-          std::cout << "Checking for Instruction: " << IR2Vec::getInstStr(&inst) << "\n";
+          // std::cout << "Checking for Instruction: " << IR2Vec::getInstStr(&inst) << "\n";
+          for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
+            llvm::Value *operand = inst.getOperand(i);
+            
+            // Check if the operand is not a pointer
+            if (!operand->getType()->isPointerTy()) {
+              if(auto parent = dyn_cast<Instruction>(inst.getOperand(i))) {
+                RD.push_back(parent);
+              }
+            }
+          }
+
           populateReachingDefs(&inst, &MDR, &RD);
           if(RD.size() > 0) {
             printReachingDefs(&inst, RD);
           }
-          std::cout << "\n";
         }
       }
     }
   }
 }
 
+void printToStdout(const llvm::MemoryAccess *memAccess) {
+    std::string output;
+    llvm::raw_string_ostream rso(output);  // Create an LLVM stream that writes to a string.
+    memAccess->print(rso);                  // Print to raw_string_ostream.
+    rso.flush();                           // Ensure all data is written to the string.
+    std::cout << output << std::endl;      // Print the string to std::cout.
+}
+
 
 void checkMemssaFunctions(llvm::Module &M) {
 
-  std::cout << "MemorySSA: Module loaded successfully " << (M.getName()).data() <<
-  std::endl;
+  // std::cout << "MemorySSA: Module loaded successfully " << (M.getName()).data() <<
+  // std::endl;
 
   // std::cout << "Instruction Count " << M.getInstructionCount() << std::endl;
 
@@ -409,17 +427,59 @@ void checkMemssaFunctions(llvm::Module &M) {
           // FPM.run(F, FAM);
             // Get MemorySSA analysis for the function
           MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-          MSSA.print(errs());
+          // MSSA.print(errs());
 
           // Print the memory dependencies for this function
 
           for (auto &BB : F) {
-            auto memphi = MSSA.getMemoryAccess(&BB);
-
-            if (memphi != nullptr) {
-              std::cout << "MemoryPhi for BB " << BB.getName().data() << std::endl;
-            } else {
-              std::cout << "No MemoryPhi for BB " << BB.getName().data() << std::endl;
+            for (Instruction &inst : BB) {
+              MemoryUseOrDef* useOrDef = MSSA.getMemoryAccess(&inst);
+              if (useOrDef) {
+                // Print the memory access
+                std::cout << "Studying instruction " << IR2Vec::getInstStr(&inst) << "\n";
+                MemoryAccess* access = useOrDef->getDefiningAccess();
+                
+                for(auto i = access->defs_begin(); i!=access->defs_end(); ++i) {
+                  if(*i) {
+                    if (auto memdef = llvm::dyn_cast<llvm::MemoryDef>(*i)) {
+                      auto ins = memdef->getMemoryInst();
+                      if(ins)
+                        std::cout << "\t\tMemoryDef: " << IR2Vec::getInstStr(ins) << "\n";
+                      else
+                        std::cout << "No MemoryInst" << "\n";
+                    } else if (auto memuse = llvm::dyn_cast<llvm::MemoryUse>(*i)) {
+                      auto ins = memuse->getMemoryInst();
+                      if(ins)
+                        std::cout << "\t\tMemoryUse: " << IR2Vec::getInstStr(ins) << "\n";
+                      else
+                        std::cout << "No MemoryInst" << "\n";
+                    } else if (auto memphi = llvm::dyn_cast<llvm::MemoryPhi>(*i)) {
+                      std::cout << "MemPHi" << "\n";
+                      for (unsigned num = 0; num < memphi->getNumIncomingValues(); ++num) {
+                        MemoryAccess* memphiaccess = memphi->getIncomingValue(num);
+                        if (auto memdef = llvm::dyn_cast<llvm::MemoryDef>(memphiaccess)) {
+                          auto ins = memdef->getMemoryInst();
+                          if(ins)
+                            std::cout << "\t\tMemoryDef: " << IR2Vec::getInstStr(ins) << "\n";
+                          else
+                            std::cout << "No MemoryInst" << "\n";
+                        } else if (auto memuse = llvm::dyn_cast<llvm::MemoryUse>(memphiaccess)) {
+                          auto ins = memuse->getMemoryInst();
+                          if(ins)
+                            std::cout << "\t\tMemoryUse: " << IR2Vec::getInstStr(ins) << "\n";
+                          else
+                            std::cout << "No MemoryInst" << "\n";
+                        } else {
+                          std::cout << "Try something else - Unknown Memphi" << "\n";
+                        }
+                      }
+                    } else {
+                      std::cout << "Try something else" << "\n";
+                    }
+                  }
+                }
+                // printToStdout(access);
+              }
             }
           }
       }
