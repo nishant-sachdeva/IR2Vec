@@ -252,6 +252,79 @@ void checkFailureConditions() {
     exit(1);
 }
 
+void populateReachingDefs(
+  llvm::Instruction* inst, 
+  llvm::MemoryDependenceResults* MDR, 
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+);
+
+void getInstORCallPopulate(
+  llvm::MemDepResult* memdep,
+  llvm::MemoryDependenceResults* MDR,
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+) {
+    auto depIns = memdep->getInst();
+
+    if (depIns && !IR2Vec::isLoad(depIns)) {
+      std::cout << "\t" << IR2Vec::getInstStr(depIns);
+      RD->push_back(depIns);
+    } else {
+      populateReachingDefs(depIns, MDR, RD);
+    }
+}
+
+std::string isDefOrClobber(MemDepResult* memdep) {
+  std::string isDefOrClobber = "";
+  if (memdep->isLocal()){
+    isDefOrClobber = (memdep->isDef()) ? " isDef" : " isClobber";
+  } else if (memdep->isNonLocal()) {
+    isDefOrClobber = " isNonLocal";
+  }
+  return isDefOrClobber;
+}
+
+void populateReachingDefs(
+  llvm::Instruction* inst, 
+  llvm::MemoryDependenceResults* MDR, 
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+) {
+  std::cout << "\t" << IR2Vec::getInstStr(inst);
+  MemDepResult memdep = MDR->getDependency(inst);
+  if (memdep.isLocal()){
+    std::cout << "\t> local " << isDefOrClobber(&memdep) << "\t";
+    getInstORCallPopulate(&memdep, MDR, RD);
+  } else if (memdep.isNonLocal()) {
+    std::cout << "\t> non-local \n\t\t";
+    SmallVector<NonLocalDepResult> nonLocalResults;
+    MDR->getNonLocalPointerDependency(inst, nonLocalResults);
+    for(auto res: nonLocalResults) {
+      auto localmemdep = res.getResult();
+      std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
+      getInstORCallPopulate(&localmemdep, MDR, RD);
+      std::cout << "\n\t\t";
+    }
+  } else if (memdep.isNonFuncLocal()) {
+    std::cout << "\t> non-func-local \n\t\t";
+    CallBase *CB = dyn_cast<CallBase>(inst);
+    if (CB) {
+      auto nonLocalDepVec = MDR->getNonLocalCallDependency(CB);
+      for(auto vecDep: nonLocalDepVec) {
+        auto localmemdep = vecDep.getResult();
+        std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
+        getInstORCallPopulate(&localmemdep, MDR, RD);
+        std::cout << "\n\t\t";
+      }
+    }
+  } else {
+    std::cout << "\t> unknown";
+    assert(memdep.isUnknown() && "Unknown memdep result");
+  }
+
+  std::cout << "\n";
+
+  return;
+}
+
 void checkMemdepFunctions(llvm::Module &M) {
   PassBuilder PB;
   FunctionAnalysisManager FAM;
@@ -285,41 +358,14 @@ void checkMemdepFunctions(llvm::Module &M) {
 
       for (BasicBlock &BB : F) {
         // std::cout << "TESTING FOR MEMDEPRESULTS :: BASIC BLOCK" << std::endl;
-        for (Instruction &I : BB) {
-          // std::cout << "TESTING FOR MEMDEPRESULTS" << std::endl;
-          // Get the memory dependence information for the instruction
-          // if (!IR2Vec::isLoadorStore(&I)) continue;
+        for (Instruction &inst : BB) {
           llvm::SmallVector<const llvm::Instruction*, 10> RD;
-          MemDepResult memdep = MDR.getDependency(&I);
-
-          if (memdep.isLocal()){
-            auto ins = memdep.getInst();
-            if (ins){RD.push_back(ins);}
-          } else if (memdep.isNonLocal()) {
-            SmallVector<NonLocalDepResult> nonLocalResults;
-            MDR.getNonLocalPointerDependency(&I, nonLocalResults);
-            for(auto res: nonLocalResults) {
-              auto ins = res.getResult().getInst();
-              if (ins) RD.push_back(ins);
-            }
-          } else if (memdep.isNonFuncLocal()) {
-            // std::cout << "Using nonFuncLocal section " << IR2Vec::getInstStr(&I) << std::endl;
-            CallBase *CB = dyn_cast<CallBase>(&I);
-            if (CB) {
-              auto nonLocalDepVec = MDR.getNonLocalCallDependency(CB);
-              for(auto vecDep: nonLocalDepVec) {
-                auto ins = vecDep.getResult().getInst();
-                if(ins) RD.push_back(ins);
-              }
-            }
-          } else if (memdep.isUnknown()) { 
-            // std::cout << "Result is Unknown " << IR2Vec::getInstStr(&I) << std::endl;
-            continue;
-          }
-
+          std::cout << "Checking for Instruction: " << IR2Vec::getInstStr(&inst) << "\n";
+          populateReachingDefs(&inst, &MDR, &RD);
           if(RD.size() > 0) {
-            printReachingDefs(&I, RD);
+            printReachingDefs(&inst, RD);
           }
+          std::cout << "\n";
         }
       }
     }
