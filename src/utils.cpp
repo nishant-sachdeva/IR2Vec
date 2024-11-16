@@ -72,15 +72,10 @@ bool IR2Vec::isLoadorStore(const llvm::Instruction* I) {
 }
 
 void IR2Vec::printReachingDefs(const llvm::Instruction *I, llvm::SmallVector<const llvm::Instruction*, 10> RD) {
-  if (!IR2Vec::isLoadorStore(I)) return;
-  std::string instStr = IR2Vec::getInstStr(I);
-
-  std::cout << instStr << " dependent on";
+  std::cout << IR2Vec::getInstStr(I) << " dependent on";
 
   for (auto reachInst : RD) {
-    std::string depIns = IR2Vec::getInstStr(reachInst);
-    
-    if(instStr != depIns) std::cout <<  " " << IR2Vec::getInstStr(reachInst);
+    std::cout <<  " " << IR2Vec::getInstStr(reachInst);
   }
 
   std::cout << std::endl;

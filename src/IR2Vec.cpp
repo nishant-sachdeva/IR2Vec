@@ -252,24 +252,34 @@ void checkFailureConditions() {
     exit(1);
 }
 
-void populateReachingDefs(
+void populateRDWithMemDep(
   llvm::Instruction* inst, 
   llvm::MemoryDependenceResults* MDR, 
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
 );
 
 void getInstORCallPopulate(
   llvm::MemDepResult* memdep,
   llvm::MemoryDependenceResults* MDR,
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
 ) {
     auto depIns = memdep->getInst();
 
-    if (depIns && !IR2Vec::isLoad(depIns)) {
-      // std::cout << "\t" << IR2Vec::getInstStr(depIns);
+    // TODO :: Instead of checking if it's merely a LOAD. 
+    // Check if there's an Alias Analysis situation
+    if (depIns && !IR2Vec::isLoad(depIns) && (Visited.find(depIns) == Visited.end())) {
+      IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(depIns));
+      Visited[depIns] = true;
       RD->push_back(depIns);
     } else {
-      populateReachingDefs(depIns, MDR, RD);
+      if (Visited.find(depIns) == Visited.end()) {
+        populateRDWithMemDep(depIns, MDR, RD, Visited);
+      } else {
+        IR2VEC_DEBUG(std::cout << "\t Already Visited " << IR2Vec::getInstStr(depIns));
+        return;
+      }
     }
 }
 
@@ -283,46 +293,116 @@ std::string isDefOrClobber(MemDepResult* memdep) {
   return isDefOrClobber;
 }
 
-void populateReachingDefs(
+void populateRDWithMemDep(
   llvm::Instruction* inst, 
   llvm::MemoryDependenceResults* MDR, 
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
 ) {
-  // std::cout << "\t" << IR2Vec::getInstStr(inst);
+  Visited[inst] = true;
+  IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(inst));
+
   MemDepResult memdep = MDR->getDependency(inst);
   if (memdep.isLocal()){
-    // std::cout << "\t> local " << isDefOrClobber(&memdep) << "\t";
-    getInstORCallPopulate(&memdep, MDR, RD);
+    IR2VEC_DEBUG(std::cout << "\t> local " << isDefOrClobber(&memdep) << "\t");
+    getInstORCallPopulate(&memdep, MDR, RD, Visited);
   } else if (memdep.isNonLocal()) {
-    // std::cout << "\t> non-local \n\t\t";
+    IR2VEC_DEBUG(std::cout << "\t> non-local " << "\n\t\t");
     SmallVector<NonLocalDepResult> nonLocalResults;
     MDR->getNonLocalPointerDependency(inst, nonLocalResults);
     for(auto res: nonLocalResults) {
-      auto localmemdep = res.getResult();
-      // std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
-      getInstORCallPopulate(&localmemdep, MDR, RD);
-      // std::cout << "\n\t\t";
+      MemDepResult localmemdep = res.getResult();
+      IR2VEC_DEBUG(
+        std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t"
+      );
+      getInstORCallPopulate(&localmemdep, MDR, RD, Visited);
+      IR2VEC_DEBUG(std::cout << "\n\t\t");
     }
   } else if (memdep.isNonFuncLocal()) {
-    // std::cout << "\t> non-func-local \n\t\t";
+    IR2VEC_DEBUG(std::cout << "\t> non-func-local \n\t\t");
+
     CallBase *CB = dyn_cast<CallBase>(inst);
     if (CB) {
       auto nonLocalDepVec = MDR->getNonLocalCallDependency(CB);
       for(auto vecDep: nonLocalDepVec) {
         auto localmemdep = vecDep.getResult();
-        // std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t";
-        getInstORCallPopulate(&localmemdep, MDR, RD);
-        // std::cout << "\n\t\t";
+        IR2VEC_DEBUG(std::cout << "\t" << isDefOrClobber(&localmemdep) << "\t");
+
+        getInstORCallPopulate(&localmemdep, MDR, RD, Visited);
+        IR2VEC_DEBUG(std::cout << "\n\t\t");
       }
+    } else {
+      IR2VEC_DEBUG(std::cout << "\t> " << IR2Vec::getInstStr(inst) << " - Not a call instruction\n\t\t");
     }
   } else {
-    // std::cout << "\t> unknown";
+    IR2VEC_DEBUG(std::cout << "\t> unknown");
     assert(memdep.isUnknown() && "Unknown memdep result");
   }
 
-  // std::cout << "\n";
+  IR2VEC_DEBUG(std::cout << "\n");
 
   return;
+}
+
+
+void printOperand(llvm::Value *operand) {
+  std::cout << "Operand: ";
+  std::string output;
+  llvm::raw_string_ostream rso(output);
+  operand->print(rso);                
+  rso.flush();                         
+  std::cout << output << std::endl;
+
+  if (auto *inst = dyn_cast<Instruction>(operand)) {
+    std::cout << "Instruction: " << IR2Vec::getInstStr(inst);
+  } else if (auto *arg = dyn_cast<Argument>(operand)) {
+    std::cout << "Argument: " << (arg->getParent()->getName()).data() << " " << arg->getArgNo();
+  } else if (auto *constInst = dyn_cast<Constant>(operand)) {
+    std::cout << "Constant: " << constInst->getValueID();
+  } else {
+    std::cout << "Unknown operand type";
+  }
+  std::cout << std::endl;
+}
+
+void printTypeToStdout(llvm::Type *type) {
+    std::string output;
+    llvm::raw_string_ostream rso(output);
+    type->print(rso);                
+    rso.flush();                         
+    std::cout << output << std::endl;    
+}
+
+void calcReachingDefs(
+  llvm::Instruction* inst,
+  llvm::MemoryDependenceResults &MDR,
+  llvm::SmallVector<const llvm::Instruction*, 10> &RD
+) {
+  IR2VEC_DEBUG(std::cout << "\nStudying instruction " << IR2Vec::getInstStr(inst) << "\n");
+  if (!isLoadorStore(inst)) {
+    for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
+      llvm::Value *operand = inst->getOperand(i);
+      if(auto parent = dyn_cast<Instruction>(operand)) {
+        RD.push_back(parent);
+      }
+    }
+  } else {
+    for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
+      llvm::Value *operand = inst->getOperand(i);
+
+      IR2VEC_DEBUG(printOperand(operand));
+      
+      // Check if the operand is not a pointer
+      IR2VEC_DEBUG(printTypeToStdout(operand->getType()));
+      if (!operand->getType()->isPointerTy()) {
+        if(auto parent = dyn_cast<Instruction>(inst->getOperand(i))) {
+          RD.push_back(parent);
+        }
+      }
+    }
+    std::unordered_map<const llvm::Instruction *, bool> Visited;
+    populateRDWithMemDep(inst, &MDR, &RD, Visited);
+  }
 }
 
 void checkMemdepFunctions(llvm::Module &M) {
@@ -349,30 +429,12 @@ void checkMemdepFunctions(llvm::Module &M) {
 
   for (auto &F : M) {
     if (!F.isDeclaration()) {
-      // std::cout << "ENTERING FOR MEMDEPRESULTS" << std::endl;
       llvm::MemoryDependenceResults &MDR = FAM.getResult<llvm::MemoryDependenceAnalysis>(F);
 
-      // std::cout << "TESTING FOR MEMDEPRESULTS :: MDR ready" << std::endl;
-      // std::cout << "getDefaultBlockScanLimit() "  <<
-      // MDR.getDefaultBlockScanLimit() << std::endl;
-
       for (BasicBlock &BB : F) {
-        // std::cout << "TESTING FOR MEMDEPRESULTS :: BASIC BLOCK" << std::endl;
         for (Instruction &inst : BB) {
           llvm::SmallVector<const llvm::Instruction*, 10> RD;
-          // std::cout << "Checking for Instruction: " << IR2Vec::getInstStr(&inst) << "\n";
-          for (unsigned i = 0; i < inst.getNumOperands(); ++i) {
-            llvm::Value *operand = inst.getOperand(i);
-            
-            // Check if the operand is not a pointer
-            if (!operand->getType()->isPointerTy()) {
-              if(auto parent = dyn_cast<Instruction>(inst.getOperand(i))) {
-                RD.push_back(parent);
-              }
-            }
-          }
-
-          populateReachingDefs(&inst, &MDR, &RD);
+          calcReachingDefs(&inst, MDR, RD);
           if(RD.size() > 0) {
             printReachingDefs(&inst, RD);
           }
@@ -384,10 +446,10 @@ void checkMemdepFunctions(llvm::Module &M) {
 
 void printToStdout(const llvm::MemoryAccess *memAccess) {
     std::string output;
-    llvm::raw_string_ostream rso(output);  // Create an LLVM stream that writes to a string.
-    memAccess->print(rso);                  // Print to raw_string_ostream.
-    rso.flush();                           // Ensure all data is written to the string.
-    std::cout << output << std::endl;      // Print the string to std::cout.
+    llvm::raw_string_ostream rso(output);
+    memAccess->print(rso);                
+    rso.flush();                         
+    std::cout << output << std::endl;    
 }
 
 
