@@ -253,7 +253,8 @@ void checkFailureConditions() {
 }
 
 void populateRDWithMemDep(
-  llvm::Instruction* inst, 
+  llvm::Instruction* inst,
+  llvm::MemDepResult* memdep,
   llvm::MemoryDependenceResults* MDR, 
   llvm::SmallVector<const llvm::Instruction*, 10>* RD,
   std::unordered_map<const llvm::Instruction *, bool> &Visited
@@ -268,124 +269,6 @@ void printObject(const T* obj) {
     rso.flush();
     std::cout << output << std::endl;
 }
-
-void collectNonDepRD(
-  llvm::Instruction* inst,
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD
-) {
-  IR2VEC_DEBUG(std::cout << "\tCollecting Non Rep Deps for " << IR2Vec::getInstStr(inst) << "\t" << inst->getNumOperands() << std::endl);
-  for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
-    llvm::Value *operand = inst->getOperand(i);
-    IR2VEC_DEBUG((operand));
-    if(auto parent = dyn_cast<Instruction>(operand)) {
-      RD->push_back(parent);
-    }
-  }
-}
-
-void getInstORCallPopulate(
-  llvm::MemDepResult* memdep,
-  llvm::MemoryDependenceResults* MDR,
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
-  std::unordered_map<const llvm::Instruction *, bool> &Visited
-) {
-    llvm::Instruction* depIns = memdep->getInst();
-
-    // if(memdep->isUnknown() || !depIns) {
-    //   IR2VEC_DEBUG(std::cout << "Unknown memdep / depIns - nullptr - Exiting" << std::endl);
-    //   return;
-    // }
-
-    if (
-      depIns &&
-      memdep->isDef() &&
-      // TODO:: refine this isLoad check to reflect alias/clobber issues.
-      !IR2Vec::isLoad(depIns) &&
-      (Visited.find(depIns) == Visited.end())
-    ) {
-      IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(depIns));
-      Visited[depIns] = true;
-      RD->push_back(depIns);
-    } else {
-      if (Visited.find(depIns) == Visited.end()) {
-        if(!isLoadorStore(depIns)) {
-          Visited[depIns] = true;
-          collectNonDepRD(depIns, RD);
-        }
-        else populateRDWithMemDep(depIns, MDR, RD, Visited);
-      } else {
-        IR2VEC_DEBUG(std::cout << "\t Already Visited " << IR2Vec::getInstStr(depIns));
-        return;
-      }
-    }
-}
-
-std::string memdepType(MemDepResult* memdep) {
-  std::string memDepType = "";
-  if (memdep->isLocal()){
-    memDepType = (memdep->isDef()) ? " isDef" : " isClobber";
-  } else if (memdep->isNonLocal()) {
-    memDepType = " isNonLocal";
-  } else if (memdep->isNonFuncLocal()) {
-    memDepType = " isNonFuncLocal";
-  } else if (memdep->isUnknown()) {
-    memDepType = " Unknown ";
-  }
-  return memDepType;
-}
-
-void populateRDWithMemDep(
-  llvm::Instruction* inst, 
-  llvm::MemoryDependenceResults* MDR, 
-  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
-  std::unordered_map<const llvm::Instruction *, bool> &Visited
-) {
-  Visited[inst] = true;
-  IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(inst));
-
-  MemDepResult memdep = MDR->getDependency(inst);
-  if (memdep.isLocal()){
-    IR2VEC_DEBUG(std::cout << "\t> local " << memdepType(&memdep) << "\t");
-    getInstORCallPopulate(&memdep, MDR, RD, Visited);
-  } else if (memdep.isNonLocal()) {
-    IR2VEC_DEBUG(std::cout << "\t> non-local " << "\n\t\t");
-    SmallVector<NonLocalDepResult> nonLocalResults;
-    MDR->getNonLocalPointerDependency(inst, nonLocalResults);
-    for(NonLocalDepResult res: nonLocalResults) {
-      MemDepResult localmemdep = res.getResult();
-      IR2VEC_DEBUG(
-        std::cout << "\t" << memdepType(&localmemdep) << "\t"
-      );
-      getInstORCallPopulate(&localmemdep, MDR, RD, Visited);
-      IR2VEC_DEBUG(std::cout << "\n\t\t");
-    }
-  } else if (memdep.isNonFuncLocal()) {
-    IR2VEC_DEBUG(std::cout << "\t> non-func-local \n\t\t");
-
-    CallBase *CB = dyn_cast<CallBase>(inst);
-    if (CB) {
-      auto nonLocalDepVec = MDR->getNonLocalCallDependency(CB);
-      for(auto vecDep: nonLocalDepVec) {
-        auto localmemdep = vecDep.getResult();
-        IR2VEC_DEBUG(std::cout << "\t" << memdepType(&localmemdep) << "\t");
-
-        getInstORCallPopulate(&localmemdep, MDR, RD, Visited);
-        IR2VEC_DEBUG(std::cout << "\n\t\t");
-      }
-    } else {
-      IR2VEC_DEBUG(std::cout << "\t> " << IR2Vec::getInstStr(inst) << " - Not a call instruction - Collecting NonDepRD\n\t\t");
-      collectNonDepRD(inst, RD);
-    }
-  } else {
-    IR2VEC_DEBUG(std::cout << "\t> unknown");
-    assert(memdep.isUnknown() && "Unknown memdep result");
-  }
-
-  IR2VEC_DEBUG(std::cout << "\n");
-
-  return;
-}
-
 
 void printOperand(llvm::Value *operand) {
   std::cout << "Operand: ";
@@ -403,6 +286,153 @@ void printOperand(llvm::Value *operand) {
   std::cout << std::endl;
 }
 
+bool isAlloca(llvm::Instruction* inst) {
+  std::string name = inst->getOpcodeName();
+  return name == "alloca";
+}
+
+void collectNonDepRD(
+  llvm::Instruction* inst,
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD
+) {
+  IR2VEC_DEBUG(std::cout << "\tCollecting Non-Load/Store memDep for " << IR2Vec::getInstStr(inst) << "\t" << inst->getNumOperands() << std::endl);
+  IR2VEC_DEBUG(std::cout << "\t\t" << inst->getOpcodeName() << std::endl);
+  for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
+    llvm::Value *operand = inst->getOperand(i);
+    IR2VEC_DEBUG(printOperand(operand));
+    if(auto parent = dyn_cast<Instruction>(operand)) {
+      RD->push_back(parent);
+    }
+  }
+}
+
+std::string memdepType(MemDepResult* memdep) {
+  std::string memDepType = "";
+  if (memdep->isLocal()){
+    memDepType = (memdep->isDef()) ? " isDef" : " isClobber";
+  } else if (memdep->isNonLocal()) {
+    memDepType = " isNonLocal";
+  } else if (memdep->isNonFuncLocal()) {
+    memDepType = " isNonFuncLocal";
+  } else if (memdep->isUnknown()) {
+    memDepType = " Unknown ";
+  }
+  return memDepType;
+}
+
+void localMDHandler(
+  llvm::MemDepResult* memdep,
+  llvm::MemoryDependenceResults* MDR,
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
+) {
+  assert(memdep->isLocal() && "We should have a local memdep result");
+  llvm::Instruction* depIns = memdep->getInst();
+  if (!depIns) {
+    IR2VEC_DEBUG(std::cout << "\t> local - nullptr - Exiting" << std::endl);
+    return;
+  }
+
+  if (Visited.find(depIns) != Visited.end()) {
+    IR2VEC_DEBUG(std::cout << "\t Already Visited " << IR2Vec::getInstStr(depIns));
+    return;
+  } else {
+    Visited[depIns] = true;
+  }
+
+  if (
+      memdep->isDef() && 
+      (IR2Vec::isStore(depIns) || isAlloca(depIns))
+      // TODO:: refine this isStore check to reflect alias/clobber issues.
+      // not all deps on Loads can be considered as alias/clobber.
+    ) {
+      IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(depIns));
+      RD->push_back(depIns);
+    } else {
+      // TODO -- Check Aliased instructions/function calls
+      // if(!isLoadorStore(depIns)) {
+      //   IR2VEC_DEBUG(std::cout << "\t isUnaryOp" << depIns->isUnaryOp() << " " << IR2Vec::getInstStr(depIns));
+      //   collectNonDepRD(depIns, RD);
+      // }
+      // else {
+        llvm::MemDepResult localDep = MDR->getDependency(depIns);
+        populateRDWithMemDep(depIns, &localDep, MDR, RD, Visited);
+      // }
+    }
+}
+
+void nonLocalMDHandler(
+  llvm::Instruction* inst,
+  llvm::MemDepResult* memdep,
+  llvm::MemoryDependenceResults* MDR,
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
+) {
+  assert(memdep->isNonLocal() && "We should have a non-local memdep result");
+  SmallVector<NonLocalDepResult> nonLocalResults;
+  MDR->getNonLocalPointerDependency(inst, nonLocalResults);
+  for(NonLocalDepResult res: nonLocalResults) {
+    MemDepResult localmemdep = res.getResult();
+    IR2VEC_DEBUG(
+      std::cout << "\t" << memdepType(&localmemdep) << "\t"
+    );
+    populateRDWithMemDep(inst, &localmemdep, MDR, RD, Visited);
+    IR2VEC_DEBUG(std::cout << "\n\t\t");
+  }
+}
+
+void nonLocalCallHandler(
+  llvm::Instruction* inst,
+  llvm::MemDepResult* memdep,
+  llvm::MemoryDependenceResults* MDR,
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
+) {
+  assert(memdep->isNonFuncLocal() && "We should have a non-local memdep result");
+  CallBase *CB = dyn_cast<CallBase>(inst);
+  if (CB) {
+    auto nonLocalDepVec = MDR->getNonLocalCallDependency(CB);
+    for(auto vecDep: nonLocalDepVec) {
+      auto localmemdep = vecDep.getResult();
+      IR2VEC_DEBUG(std::cout << "\t" << memdepType(&localmemdep) << "\t");
+
+      populateRDWithMemDep(inst, &localmemdep, MDR, RD, Visited);
+      IR2VEC_DEBUG(std::cout << "\n\t\t");
+    }
+  } else {
+    IR2VEC_DEBUG(std::cout << "\t> " << IR2Vec::getInstStr(inst) << " - Not a call instruction - Collecting NonDepRD\n\t\t");
+    collectNonDepRD(inst, RD);
+  }
+}
+
+void populateRDWithMemDep(
+  llvm::Instruction* inst,
+  llvm::MemDepResult* memdep,
+  llvm::MemoryDependenceResults* MDR, 
+  llvm::SmallVector<const llvm::Instruction*, 10>* RD,
+  std::unordered_map<const llvm::Instruction *, bool> &Visited
+) {
+
+  if (memdep->isLocal()){
+    IR2VEC_DEBUG(std::cout << "\t> local " << memdepType(memdep) << "\t");
+    localMDHandler(memdep, MDR, RD, Visited);
+  } else if (memdep->isNonLocal()) {
+    IR2VEC_DEBUG(std::cout << "\t> non-local " << "\n\t\t");
+    nonLocalMDHandler(inst, memdep, MDR, RD, Visited);
+    
+  } else if (memdep->isNonFuncLocal()) {
+    IR2VEC_DEBUG(std::cout << "\t> non-func-local \n\t\t");
+    nonLocalCallHandler(inst, memdep, MDR, RD, Visited);
+  } else {
+    IR2VEC_DEBUG(std::cout << "\t> unknown");
+    assert(memdep->isUnknown() && "Unknown memdep result");
+  }
+
+  IR2VEC_DEBUG(std::cout << "\n");
+
+  return;
+}
+
 void calcReachingDefs(
   llvm::Instruction* inst,
   llvm::MemoryDependenceResults &MDR,
@@ -412,21 +442,26 @@ void calcReachingDefs(
   if (!isLoadorStore(inst)) {
     collectNonDepRD(inst, RD);
   } else {
+    std::unordered_map<const llvm::Instruction *, bool> Visited;
     for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
       llvm::Value *operand = inst->getOperand(i);
 
-      IR2VEC_DEBUG(printOperand(operand));
-      
-      // Check if the operand is not a pointer
-      IR2VEC_DEBUG(printObject(operand->getType()));
+      // IR2VEC_DEBUG(printOperand(operand));      
+      // IR2VEC_DEBUG(printObject(operand->getType()));
+
       if (!operand->getType()->isPointerTy()) {
         if(auto parent = dyn_cast<Instruction>(inst->getOperand(i))) {
-          RD->push_back(parent);
+          if (Visited.find(parent) == Visited.end()) {
+            Visited[parent] = true;
+            RD->push_back(parent);
+          }
         }
       }
     }
-    std::unordered_map<const llvm::Instruction *, bool> Visited;
-    populateRDWithMemDep(inst, &MDR, RD, Visited);
+    Visited[inst] = true;
+    MemDepResult memdep = MDR.getDependency(inst);
+    IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(inst));
+    populateRDWithMemDep(inst, &memdep, &MDR, RD, Visited);
   }
 }
 
