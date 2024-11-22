@@ -13,6 +13,7 @@
 #include "version.h"
 
 #include "llvm/Support/CommandLine.h"
+#include <iostream>
 #include <stdio.h>
 #include <time.h>
 
@@ -73,6 +74,97 @@ void printVersion(raw_ostream &ostream) {
   cl::PrintVersionMessage();
 }
 
+template <typename T> void printObject(const T *obj) {
+  std::string output;
+  llvm::raw_string_ostream rso(output);
+  obj->print(rso); // Call the `print` method of the object
+  rso.flush();
+  std::cout << output << std::endl;
+}
+
+// define type PeepHole = vector<BB>
+using Peephole = std::vector<llvm::BasicBlock *>;
+
+void generatePeepholeSet(llvm::Module &M, int k, int c) {
+  for (auto &F : M) {
+    std::cout << "Function: " << F.getName().data() << "\n";
+
+    std::vector<Peephole> walks;
+    std::vector<BasicBlock *> bbset, starters;
+    std::unordered_map<BasicBlock *, int> visited;
+
+    for (auto &BB : F) {
+      starters.push_back(&BB);
+      visited[&BB] = 0;
+    }
+
+    while (starters.size() > 0) {
+      // std::cout << "Starters: " << starters.size() << "\n";
+
+      int idx = 0;
+      BasicBlock *r1 = starters[idx];
+      if (!r1) {
+        // std::cout << "No starter\n";
+        break;
+      }
+
+      int walk_len = 0;
+      Peephole walk;
+      while (walk_len <= k) {
+        // std::cout << "\tWalk: " << walk_len << "\n";
+        walk.push_back(r1);
+        visited[r1]++;
+        walk_len++;
+
+        unsigned numSuccessors = llvm::succ_size(r1);
+        if (numSuccessors == 0) {
+          // std::cout << "No successors\n";
+          break;
+        } else {
+          idx = 0;
+          auto successors = llvm::successors(r1);
+          bbset =
+              std::vector<BasicBlock *>(successors.begin(), successors.end());
+          // std::cout << "Successors: " << bbset.size() << "\n";
+          r1 = bbset[idx];
+          if (!r1) {
+            // std::cout << "No successor - ERROR\n";
+            break;
+          }
+        }
+      }
+
+      walks.push_back(walk);
+      for (auto &bb : walk) {
+        if (visited[bb] >= c) {
+          // std::cout << "Erasing: " << bb->getName().data() << "count - " <<
+          // visited[bb] << "\n";
+          auto index = std::find(starters.begin(), starters.end(), bb);
+          if (index != starters.end()) {
+            starters.erase(index);
+          }
+        }
+      }
+    }
+
+    std::cout << "Walks: " << walks.size() << "\n";
+    if (walks.size() == 0) {
+      std::cout << "No walks\n";
+      continue;
+    } else {
+      for (auto &walk : walks) {
+        std::cout << "Walk: ";
+        for (auto &bb : walk) {
+          auto terminator = bb->getTerminator();
+          printObject(terminator);
+        }
+        std::cout << "\n";
+      }
+    }
+  }
+  return;
+}
+
 int main(int argc, char **argv) {
   cl::SetVersionPrinter(printVersion);
   cl::HideUnrelatedOptions(category);
@@ -93,112 +185,118 @@ int main(int argc, char **argv) {
   debug = cl_debug;
   printTime = cl_printTime;
 
-  bool failed = false;
-  if (!((sym ^ fa) ^ collectIR)) {
-    errs() << "Either of sym, fa or collectIR should be specified\n";
-    failed = true;
-  }
+  // bool failed = false;
+  // if (!((sym ^ fa) ^ collectIR)) {
+  //   errs() << "Either of sym, fa or collectIR should be specified\n";
+  //   failed = true;
+  // }
 
-  if (sym || fa) {
-    if (level != 'p' && level != 'f') {
-      errs() << "Invalid level specified: Use either p or f\n";
-      failed = true;
-    }
-  } else {
-    if (!collectIR) {
-      errs() << "Either of sym, fa or collectIR should be specified\n";
-      failed = true;
-    } else if (level)
-      errs() << "[WARNING] level would not be used in collectIR mode\n";
-  }
+  // if (sym || fa) {
+  //   if (level != 'p' && level != 'f') {
+  //     errs() << "Invalid level specified: Use either p or f\n";
+  //     failed = true;
+  //   }
+  // } else {
+  //   if (!collectIR) {
+  //     errs() << "Either of sym, fa or collectIR should be specified\n";
+  //     failed = true;
+  //   } else if (level)
+  //     errs() << "[WARNING] level would not be used in collectIR mode\n";
+  // }
 
-  if (failed)
-    exit(1);
+  // if (failed)
+  //   exit(1);
 
   auto M = getLLVMIR();
   auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
+  int k = 5; // max length of random walk
+  int c = 2; // min freq of each node
+  std::cout << "Generating peephole set\n";
+  generatePeepholeSet(*M, k, c);
+
   // newly added
-  if (sym && !(funcName.empty())) {
-    IR2Vec_Symbolic SYM(*M, vocabulary);
-    std::ofstream o;
-    o.open(oname, std::ios_base::app);
-    if (printTime) {
-      clock_t start = clock();
-      SYM.generateSymbolicEncodingsForFunction(&o, funcName);
-      clock_t end = clock();
-      double elapsed = double(end - start) / CLOCKS_PER_SEC;
-      printf("Time taken by on-demand generation of symbolic encodings "
-             "is: %.6f "
-             "seconds.\n",
-             elapsed);
-    } else {
-      SYM.generateSymbolicEncodingsForFunction(&o, funcName);
-    }
-    o.close();
-  } else if (fa && !(funcName.empty())) {
-    IR2Vec_FA FA(*M, vocabulary);
-    std::ofstream o, missCount, cyclicCount;
-    o.open(oname, std::ios_base::app);
-    missCount.open("missCount_" + oname, std::ios_base::app);
-    cyclicCount.open("cyclicCount_" + oname, std::ios_base::app);
-    if (printTime) {
-      clock_t start = clock();
-      FA.generateFlowAwareEncodingsForFunction(&o, funcName, &missCount,
-                                               &cyclicCount);
-      clock_t end = clock();
-      double elapsed = double(end - start) / CLOCKS_PER_SEC;
-      printf("Time taken by on-demand generation of flow-aware encodings "
-             "is: %.6f "
-             "seconds.\n",
-             elapsed);
-    } else {
-      FA.generateFlowAwareEncodingsForFunction(&o, funcName, &missCount,
-                                               &cyclicCount);
-    }
-    o.close();
-  } else if (fa) {
-    IR2Vec_FA FA(*M, vocabulary);
-    std::ofstream o, missCount, cyclicCount;
-    o.open(oname, std::ios_base::app);
-    missCount.open("missCount_" + oname, std::ios_base::app);
-    cyclicCount.open("cyclicCount_" + oname, std::ios_base::app);
-    if (printTime) {
-      clock_t start = clock();
-      FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
-      clock_t end = clock();
-      double elapsed = double(end - start) / CLOCKS_PER_SEC;
-      printf("Time taken by normal generation of flow-aware encodings "
-             "is: %.6f "
-             "seconds.\n",
-             elapsed);
-    } else {
-      FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
-    }
-    o.close();
-  } else if (sym) {
-    IR2Vec_Symbolic SYM(*M, vocabulary);
-    std::ofstream o;
-    o.open(oname, std::ios_base::app);
-    if (printTime) {
-      clock_t start = clock();
-      SYM.generateSymbolicEncodings(&o);
-      clock_t end = clock();
-      double elapsed = double(end - start) / CLOCKS_PER_SEC;
-      printf("Time taken by normal generation of symbolic encodings is: "
-             "%.6f "
-             "seconds.\n",
-             elapsed);
-    } else {
-      SYM.generateSymbolicEncodings(&o);
-    }
-    o.close();
-  } else if (collectIR) {
-    CollectIR cir(M);
-    std::ofstream o;
-    o.open(oname, std::ios_base::app);
-    cir.generateTriplets(o);
-    o.close();
-  }
+  // if (sym && !(funcName.empty())) {
+  //   IR2Vec_Symbolic SYM(*M, vocabulary);
+  //   std::ofstream o;
+  //   o.open(oname, std::ios_base::app);
+  //   if (printTime) {
+  //     clock_t start = clock();
+  //     SYM.generateSymbolicEncodingsForFunction(&o, funcName);
+  //     clock_t end = clock();
+  //     double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  //     printf("Time taken by on-demand generation of symbolic encodings "
+  //            "is: %.6f "
+  //            "seconds.\n",
+  //            elapsed);
+  //   } else {
+  //     SYM.generateSymbolicEncodingsForFunction(&o, funcName);
+  //   }
+  //   o.close();
+  // } else if (fa && !(funcName.empty())) {
+  //   IR2Vec_FA FA(*M, vocabulary);
+  //   std::ofstream o, missCount, cyclicCount;
+  //   o.open(oname, std::ios_base::app);
+  //   missCount.open("missCount_" + oname, std::ios_base::app);
+  //   cyclicCount.open("cyclicCount_" + oname, std::ios_base::app);
+  //   if (printTime) {
+  //     clock_t start = clock();
+  //     FA.generateFlowAwareEncodingsForFunction(&o, funcName, &missCount,
+  //                                              &cyclicCount);
+  //     clock_t end = clock();
+  //     double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  //     printf("Time taken by on-demand generation of flow-aware encodings "
+  //            "is: %.6f "
+  //            "seconds.\n",
+  //            elapsed);
+  //   } else {
+  //     FA.generateFlowAwareEncodingsForFunction(&o, funcName, &missCount,
+  //                                              &cyclicCount);
+  //   }
+  //   o.close();
+  // } else if (fa) {
+  //   IR2Vec_FA FA(*M, vocabulary);
+  //   std::ofstream o, missCount, cyclicCount;
+  //   o.open(oname, std::ios_base::app);
+  //   missCount.open("missCount_" + oname, std::ios_base::app);
+  //   cyclicCount.open("cyclicCount_" + oname, std::ios_base::app);
+  //   if (printTime) {
+  //     clock_t start = clock();
+  //     FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
+  //     clock_t end = clock();
+  //     double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  //     printf("Time taken by normal generation of flow-aware encodings "
+  //            "is: %.6f "
+  //            "seconds.\n",
+  //            elapsed);
+  //   } else {
+  //     FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
+  //   }
+  //   o.close();
+  // } else if (sym) {
+  //   IR2Vec_Symbolic SYM(*M, vocabulary);
+  //   std::ofstream o;
+  //   o.open(oname, std::ios_base::app);
+  //   if (printTime) {
+  //     clock_t start = clock();
+  //     SYM.generateSymbolicEncodings(&o);
+  //     clock_t end = clock();
+  //     double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  //     printf("Time taken by normal generation of symbolic encodings is: "
+  //            "%.6f "
+  //            "seconds.\n",
+  //            elapsed);
+  //   } else {
+  //     SYM.generateSymbolicEncodings(&o);
+  //   }
+  //   o.close();
+  // } else if (collectIR) {
+  //   CollectIR cir(M);
+  //   std::ofstream o;
+  //   o.open(oname, std::ios_base::app);
+  //   cir.generateTriplets(o);
+  //   o.close();
+  // }
+
   return 0;
 }
