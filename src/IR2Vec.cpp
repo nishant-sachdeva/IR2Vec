@@ -82,6 +82,25 @@ template <typename T> void printObject(const T *obj) {
   std::cout << output << std::endl;
 }
 
+#include <random> // For random number generation
+
+// Function to generate a random number in the range [0, x)
+int getRandomNumber(int x) {
+  if (x <= 0) {
+    throw std::invalid_argument("Input x must be greater than 0");
+  }
+
+  // Seed the random number generator
+  std::random_device rd;  // Non-deterministic random device
+  std::mt19937 gen(rd()); // Mersenne Twister RNG
+
+  // Define the range [0, x)
+  std::uniform_int_distribution<> distrib(0, x - 1);
+
+  // Generate a random number
+  return distrib(gen);
+}
+
 // define type PeepHole = vector<BB>
 using Peephole = std::vector<llvm::BasicBlock *>;
 
@@ -101,7 +120,7 @@ void generatePeepholeSet(llvm::Module &M, int k, int c) {
     while (starters.size() > 0) {
       // std::cout << "Starters: " << starters.size() << "\n";
 
-      int idx = 0;
+      int idx = getRandomNumber(starters.size());
       BasicBlock *r1 = starters[idx];
       if (!r1) {
         // std::cout << "No starter\n";
@@ -121,7 +140,7 @@ void generatePeepholeSet(llvm::Module &M, int k, int c) {
           // std::cout << "No successors\n";
           break;
         } else {
-          idx = 0;
+          idx = getRandomNumber(numSuccessors);
           auto successors = llvm::successors(r1);
           bbset =
               std::vector<BasicBlock *>(successors.begin(), successors.end());
