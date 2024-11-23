@@ -33,6 +33,7 @@
 
 #include <llvm/Analysis/AliasAnalysis.h>
 #include <llvm/Analysis/BasicAliasAnalysis.h> // For BasicAA
+#include <llvm/Analysis/DependenceAnalysis.h>
 
 using namespace llvm;
 using namespace IR2Vec;
@@ -254,7 +255,7 @@ void checkFailureConditions() {
 
 void populateRDWithMemDep(
     llvm::Instruction *inst, llvm::MemDepResult *memdep,
-    llvm::MemoryDependenceResults *MDR,
+    llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited);
 
@@ -316,7 +317,8 @@ std::string memdepType(MemDepResult *memdep) {
 }
 
 void localMDHandler(
-    llvm::MemDepResult *memdep, llvm::MemoryDependenceResults *MDR,
+    llvm::Instruction *inst, llvm::MemDepResult *memdep,
+    llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited) {
   assert(memdep->isLocal() && "We should have a local memdep result");
@@ -334,28 +336,25 @@ void localMDHandler(
     Visited[depIns] = true;
   }
 
-  if (memdep->isDef() && (IR2Vec::isStore(depIns) || isAlloca(depIns))
-      // TODO:: refine this isStore check to reflect alias/clobber issues.
-      // not all deps on Loads can be considered as alias/clobber.
-  ) {
-    IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(depIns));
+  std::unique_ptr<Dependence> dependence = DA.depends(inst, depIns, true);
+  if (isAlloca(depIns) ||
+      (dependence && (dependence->isOutput() || dependence->isAnti()))) {
+    IR2VEC_DEBUG(std::cout << "\t> local - Output/Anti Dep - Exiting"
+                           << std::endl);
     RD->push_back(depIns);
+    return;
   } else {
-    // TODO -- Check Aliased instructions/function calls
-    // if(!isLoadorStore(depIns)) {
-    //   IR2VEC_DEBUG(std::cout << "\t isUnaryOp" << depIns->isUnaryOp() << " "
-    //   << IR2Vec::getInstStr(depIns)); collectNonDepRD(depIns, RD);
-    // }
-    // else {
+    IR2VEC_DEBUG(
+        std::cout << "\t> local - Not Output/Anti Dep - Checking further"
+                  << std::endl);
     llvm::MemDepResult localDep = MDR->getDependency(depIns);
-    populateRDWithMemDep(depIns, &localDep, MDR, RD, Visited);
-    // }
+    populateRDWithMemDep(depIns, &localDep, MDR, DA, RD, Visited);
   }
 }
 
 void nonLocalMDHandler(
     llvm::Instruction *inst, llvm::MemDepResult *memdep,
-    llvm::MemoryDependenceResults *MDR,
+    llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited) {
   assert(memdep->isNonLocal() && "We should have a non-local memdep result");
@@ -364,14 +363,14 @@ void nonLocalMDHandler(
   for (NonLocalDepResult res : nonLocalResults) {
     MemDepResult localmemdep = res.getResult();
     IR2VEC_DEBUG(std::cout << "\t" << memdepType(&localmemdep) << "\t");
-    populateRDWithMemDep(inst, &localmemdep, MDR, RD, Visited);
+    populateRDWithMemDep(inst, &localmemdep, MDR, DA, RD, Visited);
     IR2VEC_DEBUG(std::cout << "\n\t\t");
   }
 }
 
 void nonLocalCallHandler(
     llvm::Instruction *inst, llvm::MemDepResult *memdep,
-    llvm::MemoryDependenceResults *MDR,
+    llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited) {
   assert(memdep->isNonFuncLocal() &&
@@ -383,7 +382,7 @@ void nonLocalCallHandler(
       auto localmemdep = vecDep.getResult();
       IR2VEC_DEBUG(std::cout << "\t" << memdepType(&localmemdep) << "\t");
 
-      populateRDWithMemDep(inst, &localmemdep, MDR, RD, Visited);
+      populateRDWithMemDep(inst, &localmemdep, MDR, DA, RD, Visited);
       IR2VEC_DEBUG(std::cout << "\n\t\t");
     }
   } else {
@@ -396,21 +395,21 @@ void nonLocalCallHandler(
 
 void populateRDWithMemDep(
     llvm::Instruction *inst, llvm::MemDepResult *memdep,
-    llvm::MemoryDependenceResults *MDR,
+    llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited) {
 
   if (memdep->isLocal()) {
     IR2VEC_DEBUG(std::cout << "\t> local " << memdepType(memdep) << "\t");
-    localMDHandler(memdep, MDR, RD, Visited);
+    localMDHandler(inst, memdep, MDR, DA, RD, Visited);
   } else if (memdep->isNonLocal()) {
     IR2VEC_DEBUG(std::cout << "\t> non-local "
                            << "\n\t\t");
-    nonLocalMDHandler(inst, memdep, MDR, RD, Visited);
+    nonLocalMDHandler(inst, memdep, MDR, DA, RD, Visited);
 
   } else if (memdep->isNonFuncLocal()) {
     IR2VEC_DEBUG(std::cout << "\t> non-func-local \n\t\t");
-    nonLocalCallHandler(inst, memdep, MDR, RD, Visited);
+    nonLocalCallHandler(inst, memdep, MDR, DA, RD, Visited);
   } else {
     IR2VEC_DEBUG(std::cout << "\t> unknown");
     assert(memdep->isUnknown() && "Unknown memdep result");
@@ -423,6 +422,7 @@ void populateRDWithMemDep(
 
 void calcReachingDefs(llvm::Instruction *inst,
                       llvm::MemoryDependenceResults &MDR,
+                      llvm::DependenceInfo &DA,
                       llvm::SmallVector<const llvm::Instruction *, 10> *RD) {
   IR2VEC_DEBUG(std::cout << "\nStudying instruction "
                          << IR2Vec::getInstStr(inst) << "\n");
@@ -448,7 +448,50 @@ void calcReachingDefs(llvm::Instruction *inst,
     Visited[inst] = true;
     MemDepResult memdep = MDR.getDependency(inst);
     IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(inst));
-    populateRDWithMemDep(inst, &memdep, &MDR, RD, Visited);
+    populateRDWithMemDep(inst, &memdep, &MDR, DA, RD, Visited);
+  }
+}
+
+void checkMemdepFunctions(llvm::Module &M) {
+  PassBuilder PB;
+  FunctionAnalysisManager FAM;
+
+  // We need to initialize the other pass managers even if we don't directly use
+  // them
+  LoopAnalysisManager LAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  // Register all the passes with the PassBuilder
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.registerFunctionAnalyses(FAM);
+
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // Register required alias analyses and memory dependence analysis
+  FAM.registerPass([] { return MemoryDependenceAnalysis(); });
+  FAM.registerPass([] { return DependenceAnalysis(); });
+  FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
+
+  for (auto &F : M) {
+    if (!F.isDeclaration()) {
+      llvm::MemoryDependenceResults &MDR =
+          FAM.getResult<llvm::MemoryDependenceAnalysis>(F);
+
+      llvm::DependenceInfo &DA = FAM.getResult<llvm::DependenceAnalysis>(F);
+
+      for (BasicBlock &BB : F) {
+        for (Instruction &inst : BB) {
+          llvm::SmallVector<const llvm::Instruction *, 10> RD;
+          calcReachingDefs(&inst, MDR, DA, &RD);
+          if (RD.size() > 0) {
+            printReachingDefs(&inst, RD);
+          }
+        }
+      }
+    }
   }
 }
 
@@ -524,46 +567,6 @@ void populateRDWithMemssa(
   }
 }
 
-void checkMemdepFunctions(llvm::Module &M) {
-  PassBuilder PB;
-  FunctionAnalysisManager FAM;
-
-  // We need to initialize the other pass managers even if we don't directly use
-  // them
-  LoopAnalysisManager LAM;
-  CGSCCAnalysisManager CGAM;
-  ModuleAnalysisManager MAM;
-
-  // Register all the passes with the PassBuilder
-  PB.registerModuleAnalyses(MAM);
-  PB.registerCGSCCAnalyses(CGAM);
-  PB.registerLoopAnalyses(LAM);
-  PB.registerFunctionAnalyses(FAM);
-
-  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-
-  // Register required alias analyses and memory dependence analysis
-  FAM.registerPass([] { return MemoryDependenceAnalysis(); });
-  FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
-
-  for (auto &F : M) {
-    if (!F.isDeclaration()) {
-      llvm::MemoryDependenceResults &MDR =
-          FAM.getResult<llvm::MemoryDependenceAnalysis>(F);
-
-      for (BasicBlock &BB : F) {
-        for (Instruction &inst : BB) {
-          llvm::SmallVector<const llvm::Instruction *, 10> RD;
-          calcReachingDefs(&inst, MDR, &RD);
-          if (RD.size() > 0) {
-            printReachingDefs(&inst, RD);
-          }
-        }
-      }
-    }
-  }
-}
-
 void calcSSAReachingDefs(llvm::Instruction *inst, llvm::MemorySSA &MSSA,
                          llvm::SmallVector<const llvm::Instruction *, 10> *RD) {
   IR2VEC_DEBUG(std::cout << "Studying instruction " << IR2Vec::getInstStr(inst)
@@ -627,6 +630,47 @@ void checkMemssaFunctions(llvm::Module &M) {
     }
   }
 }
+
+// void checkDepAnalysisFunctions(llvm::Module &M) {
+//   PassBuilder PB;
+//   FunctionAnalysisManager FAM;
+
+//   // We need to initialize the other pass managers even if we don't directly
+//   use
+//   // them
+//   LoopAnalysisManager LAM;
+//   CGSCCAnalysisManager CGAM;
+//   ModuleAnalysisManager MAM;
+
+//   // Register all the passes with the PassBuilder
+//   PB.registerModuleAnalyses(MAM);
+//   PB.registerCGSCCAnalyses(CGAM);
+//   PB.registerLoopAnalyses(LAM);
+//   PB.registerFunctionAnalyses(FAM);
+
+//   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+//   // Register required alias analyses and memory dependence analysis
+//   FAM.registerPass([] { return DependenceAnalysis(); });
+//   FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
+
+//   // Run the pass on each function in the module
+//   for (Function &F : M) {
+//     if (!F.isDeclaration()) {
+//       DependenceInfo &result = FAM.getResult<DependenceAnalysis>(F);
+
+//       // for (auto &BB : F) {
+//       //   for (Instruction &inst : BB) {
+//       //     llvm::SmallVector<const llvm::Instruction *, 10> RD;
+//       //     calcSSAReachingDefs(&inst, MSSA, &RD);
+//       //     if (RD.size() > 0) {
+//       //       printReachingDefs(&inst, RD);
+//       //     }
+//       //   }
+//       // }
+//     }
+//   }
+// }
 
 void runMDA() {
   auto M = getLLVMIR();
