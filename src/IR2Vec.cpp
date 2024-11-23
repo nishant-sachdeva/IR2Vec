@@ -339,7 +339,8 @@ void localMDHandler(
   std::unique_ptr<Dependence> dependence = DA.depends(inst, depIns, true);
   if (isAlloca(depIns) ||
       (dependence && (dependence->isOutput() || dependence->isAnti()))) {
-    IR2VEC_DEBUG(std::cout << "\t> local - Output/Anti Dep - Exiting"
+    IR2VEC_DEBUG(std::cout << IR2Vec::getInstStr(depIns)
+                           << "\t> local - Output/Anti Dep - Exiting"
                            << std::endl);
     RD->push_back(depIns);
     return;
