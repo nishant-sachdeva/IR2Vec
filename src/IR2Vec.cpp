@@ -257,17 +257,24 @@ void generatePeepholeSet(llvm::Module &M, WalkSet *walks, llvm::Function &F,
 }
 
 void runPassesOnModule(llvm::Module &M) {
-  FunctionPassManager FPM;
+  llvm::PassBuilder PB;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::ModuleAnalysisManager MAM;
+  llvm::LoopAnalysisManager LAM;
+  llvm::CGSCCAnalysisManager CGAM;
 
-  FPM.addPass(PromotePass());
-  FPM.addPass(SimplifyCFGPass());
-
-  ModulePassManager MPM;
-  MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
-
-  PassBuilder PB;
-  ModuleAnalysisManager MAM;
+  PB.registerFunctionAnalyses(FAM);
   PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  llvm::FunctionPassManager FPM;
+  FPM.addPass(llvm::PromotePass());
+  FPM.addPass(llvm::SimplifyCFGPass());
+
+  llvm::ModulePassManager MPM;
+  MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
   MPM.run(M, MAM);
 }
 
