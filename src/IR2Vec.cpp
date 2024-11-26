@@ -75,6 +75,10 @@ void printVersion(raw_ostream &ostream) {
 }
 
 template <typename T> void printObject(const T *obj) {
+  if (!obj) {
+    std::cout << "Null object - no object to print\n";
+    return;
+  }
   std::string output;
   llvm::raw_string_ostream rso(output);
   obj->print(rso); // Call the `print` method of the object
@@ -101,85 +105,144 @@ int getRandomNumber(int x) {
   return distrib(gen);
 }
 
-// define type PeepHole = vector<BB>
-using Peephole = std::vector<llvm::BasicBlock *>;
+// define type PeepHole = vector<Instructions>
+using Peephole = std::vector<llvm::Instruction *>;
+using WalkSet = std::vector<Peephole>;
 
-void generatePeepholeSet(llvm::Module &M, int k, int c) {
-  for (auto &F : M) {
-    std::cout << "Function: " << F.getName().data() << "\n";
+void printWalk(Peephole &walk) {
+  for (auto &inst : walk) {
+    printObject(inst);
+  }
+}
 
-    std::vector<Peephole> walks;
-    std::vector<BasicBlock *> bbset, starters;
-    std::unordered_map<BasicBlock *, int> visited;
+void store_store_elimination(Peephole &walk) {
+  std::cout << "Running store store elimination\n";
+  std::unordered_map<Value *, unsigned> storeMap;
 
-    for (auto &BB : F) {
-      starters.push_back(&BB);
-      visited[&BB] = 0;
+  for (int i = 0; i < walk.size(); i++) {
+    Instruction *inst = walk[i];
+    assert(dyn_cast<Instruction>(inst));
+
+    if (auto *store = dyn_cast<StoreInst>(inst)) {
+      assert(store);
+      std::cout << "Got Store instruction";
+      printObject(store);
+      std::cout << "\n";
+
+      Value *val = store->getPointerOperand();
+      std::cout << "Got Value";
+      printObject(val);
+      std::cout << "\n";
+
+      if (storeMap.find(val) != storeMap.end()) {
+        // Found a store to the same address, eliminate the previouse store
+        unsigned prevStore = storeMap[val];
+        std::cout << "ERASING ";
+        printObject(walk[prevStore]);
+        walk.erase(walk.begin() + prevStore);
+        std::cout << "Done erasing" << std::endl;
+        assert(prevStore < i);
+        i--;
+      }
+      storeMap[val] = i;
+      std::cout << "Done storing" << std::endl;
+    } else if (auto *load = dyn_cast<LoadInst>(inst)) {
+      assert(load);
+      std::cout << "Got Load instruction";
+      printObject(load);
+      std::cout << "\n";
+
+      Value *val = load->getPointerOperand();
+      std::cout << "Got load value";
+      printObject(val);
+      std::cout << std::endl;
+
+      if (storeMap.find(val) != storeMap.end()) {
+        std::cout << "Found a load from the same address, remove the store "
+                     "instruction from the map\n";
+        storeMap.erase(val);
+      }
+    }
+  }
+
+  if (storeMap.size() > 0) {
+    std::cout << "Emptying store map" << std::endl;
+    storeMap.clear();
+  }
+}
+
+void normaliseWalks(std::vector<WalkSet> &FunctionWalkSet) {
+  for (WalkSet &functionWalk : FunctionWalkSet) {
+    for (Peephole &walk : functionWalk) {
+      std::cout << "\n\nBefore store-store eliminatin\n\n";
+      printWalk(walk);
+      store_store_elimination(walk);
+      std::cout << "\n\nAfter store-store eliminatin\n\n";
+      printWalk(walk);
+    }
+  }
+}
+
+void addBBToWalk(Peephole &walk, BasicBlock *r1) {
+  // std::cout << "Adding BB to walk\n";
+  for (auto &Inst : *r1) {
+    walk.push_back(&Inst);
+  }
+}
+
+void generatePeepholeSet(llvm::Module &M, WalkSet *walks, llvm::Function &F,
+                         int k, int c) {
+  std::cout << "Function: " << F.getName().data() << "\n";
+  std::vector<BasicBlock *> bbset, starters;
+  std::unordered_map<BasicBlock *, int> visited;
+
+  for (auto &BB : F) {
+    starters.push_back(&BB);
+    visited[&BB] = 0;
+  }
+
+  while (starters.size() > 0) {
+    // std::cout << "Starters: " << starters.size() << "\n";
+
+    int idx = getRandomNumber(starters.size());
+    BasicBlock *r1 = starters[idx];
+    if (!r1) {
+      std::cout << "No starter\n";
+      break;
     }
 
-    while (starters.size() > 0) {
-      // std::cout << "Starters: " << starters.size() << "\n";
+    int walk_len = 0;
+    Peephole walk;
+    while (walk_len <= k) {
+      // std::cout << "\tWalk: " << walk_len << "\n";
+      addBBToWalk(walk, r1);
+      visited[r1]++;
+      walk_len++;
 
-      int idx = getRandomNumber(starters.size());
-      BasicBlock *r1 = starters[idx];
-      if (!r1) {
-        // std::cout << "No starter\n";
+      if (visited[r1] >= c) {
+        auto index = std::find(starters.begin(), starters.end(), r1);
+        if (index != starters.end()) {
+          starters.erase(index);
+        }
+      }
+
+      unsigned numSuccessors = llvm::succ_size(r1);
+      if (numSuccessors == 0) {
+        // std::cout << "No successors\n";
         break;
-      }
-
-      int walk_len = 0;
-      Peephole walk;
-      while (walk_len <= k) {
-        // std::cout << "\tWalk: " << walk_len << "\n";
-        walk.push_back(r1);
-        visited[r1]++;
-        walk_len++;
-
-        unsigned numSuccessors = llvm::succ_size(r1);
-        if (numSuccessors == 0) {
-          // std::cout << "No successors\n";
+      } else {
+        idx = getRandomNumber(numSuccessors);
+        auto successors = llvm::successors(r1);
+        bbset = std::vector<BasicBlock *>(successors.begin(), successors.end());
+        // std::cout << "Successors: " << bbset.size() << "\n";
+        r1 = bbset[idx];
+        if (!r1) {
+          std::cout << "No successor - ERROR\n";
           break;
-        } else {
-          idx = getRandomNumber(numSuccessors);
-          auto successors = llvm::successors(r1);
-          bbset =
-              std::vector<BasicBlock *>(successors.begin(), successors.end());
-          // std::cout << "Successors: " << bbset.size() << "\n";
-          r1 = bbset[idx];
-          if (!r1) {
-            // std::cout << "No successor - ERROR\n";
-            break;
-          }
-        }
-      }
-
-      walks.push_back(walk);
-      for (auto &bb : walk) {
-        if (visited[bb] >= c) {
-          // std::cout << "Erasing: " << bb->getName().data() << "count - " <<
-          // visited[bb] << "\n";
-          auto index = std::find(starters.begin(), starters.end(), bb);
-          if (index != starters.end()) {
-            starters.erase(index);
-          }
         }
       }
     }
-
-    std::cout << "Walks: " << walks.size() << "\n";
-    if (walks.size() == 0) {
-      std::cout << "No walks\n";
-      continue;
-    } else {
-      for (auto &walk : walks) {
-        std::cout << "Walk: ";
-        for (auto &bb : walk) {
-          auto terminator = bb->getTerminator();
-          printObject(terminator);
-        }
-        std::cout << "\n";
-      }
-    }
+    walks->push_back(walk);
   }
   return;
 }
@@ -229,10 +292,32 @@ int main(int argc, char **argv) {
   auto M = getLLVMIR();
   auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
-  int k = 5; // max length of random walk
+  int k = 4; // max length of random walk
   int c = 2; // min freq of each node
   std::cout << "Generating peephole set\n";
-  generatePeepholeSet(*M, k, c);
+
+  std::vector<WalkSet> functionWalks;
+
+  for (auto &F : *M) {
+    WalkSet walks;
+    generatePeepholeSet(*M, &walks, F, k, c);
+
+    std::cout << "Walks Generated : " << walks.size() << "\n\n\n";
+    if (walks.size() == 0) {
+      std::cout << "No walks\n";
+      continue;
+    } else {
+      for (auto &walk : walks) {
+        printWalk(walk);
+      }
+    }
+
+    functionWalks.push_back(walks);
+  }
+
+  // here - we normalize the walks
+  // std::cout << "Starting normalisaton " << std::endl;
+  // normaliseWalks(functionWalks);
 
   // newly added
   // if (sym && !(funcName.empty())) {
