@@ -134,14 +134,14 @@ void store_store_elimination(Peephole &walk) {
 
     if (auto *store = dyn_cast<StoreInst>(inst)) {
       assert(store);
-      std::cout << "Got Store instruction";
-      printObject(store);
-      std::cout << "\n";
+      // std::cout << "Got Store instruction";
+      // printObject(store);
+      // std::cout << "\n";
 
       Value *val = store->getPointerOperand();
-      std::cout << "Got Value";
-      printObject(val);
-      std::cout << "\n";
+      // std::cout << "Got Value";
+      // printObject(val);
+      // std::cout << "\n";
 
       if (storeMap.find(val) != storeMap.end()) {
         // Found a store to the same address, eliminate the previouse store
@@ -149,38 +149,38 @@ void store_store_elimination(Peephole &walk) {
         std::cout << "ERASING ";
         printObject(walk[prevStore]);
         walk.erase(walk.begin() + prevStore);
-        std::cout << "Done erasing" << std::endl;
+        // std::cout << "Done erasing" << std::endl;
         assert(prevStore < i);
         i--;
       }
       storeMap[val] = i;
-      std::cout << "Done storing" << std::endl;
+      // std::cout << "Done storing" << std::endl;
     } else if (auto *load = dyn_cast<LoadInst>(inst)) {
       assert(load);
-      std::cout << "Got Load instruction";
-      printObject(load);
-      std::cout << "\n";
+      // std::cout << "Got Load instruction";
+      // printObject(load);
+      // std::cout << "\n";
 
       Value *val = load->getPointerOperand();
-      std::cout << "Got load value";
-      printObject(val);
-      std::cout << std::endl;
+      // std::cout << "Got load value";
+      // printObject(val);
+      // std::cout << std::endl;
 
       if (storeMap.find(val) != storeMap.end()) {
-        std::cout << "Found a load from the same address, remove the store "
-                     "instruction from the map\n";
+        // std::cout << "Found a load from the same address, remove the store "
+        //  "instruction from the map\n";
         storeMap.erase(val);
       }
     }
   }
 
   if (storeMap.size() > 0) {
-    std::cout << "Emptying store map" << std::endl;
+    // std::cout << "Emptying store map" << std::endl;
     storeMap.clear();
   }
 }
 
-void normaliseWalks(std::vector<WalkSet> &FunctionWalkSet) {
+void normaliseFunctionWalks(std::vector<WalkSet> &FunctionWalkSet) {
   for (WalkSet &functionWalk : FunctionWalkSet) {
     for (Peephole &walk : functionWalk) {
       std::cout << "\n\nBefore store-store eliminatin\n\n";
@@ -278,6 +278,15 @@ void runPassesOnModule(llvm::Module &M) {
   MPM.run(M, MAM);
 }
 
+void printFunctionWalks(std::vector<WalkSet> &functionWalks) {
+  for (auto &walkSet : functionWalks) {
+    std::cout << "walks generated - " << walkSet.size() << "\n";
+    for (auto walk : walkSet) {
+      printWalk(walk);
+    }
+  }
+}
+
 void preProcessing(llvm::Module &M) {
   int k = 4; // max length of random walk
   int c = 2; // min freq of each node
@@ -285,26 +294,21 @@ void preProcessing(llvm::Module &M) {
 
   // M.print(outs(), nullptr);
   runPassesOnModule(M);
-  M.print(outs(), nullptr);
+  // M.print(outs(), nullptr);
 
-  // std::vector<WalkSet> functionWalks;
+  std::vector<WalkSet> functionWalks;
 
-  // for (auto &F : M) {
-  //   WalkSet walks;
-  //   generatePeepholeSet(M, &walks, F, k, c);
+  for (auto &F : M) {
+    WalkSet walks;
+    generatePeepholeSet(M, &walks, F, k, c);
+    functionWalks.push_back(walks);
+  }
 
-  //   std::cout << "Walks Generated : " << walks.size() << "\n\n\n";
-  //   if (walks.size() == 0) {
-  //     std::cout << "No walks\n";
-  //     continue;
-  //   } else {
-  //     for (auto &walk : walks) {
-  //       printWalk(walk);
-  //     }
-  //   }
+  printFunctionWalks(functionWalks);
 
-  //   functionWalks.push_back(walks);
-  // }
+  // here - we normalize the walks
+  std::cout << "Starting normalisaton " << std::endl;
+  normaliseFunctionWalks(functionWalks);
 }
 
 int main(int argc, char **argv) {
@@ -352,10 +356,6 @@ int main(int argc, char **argv) {
   std::unique_ptr<llvm::Module> M = getLLVMIR();
 
   preProcessing(*M);
-
-  // here - we normalize the walks
-  // std::cout << "Starting normalisaton " << std::endl;
-  // normaliseWalks(functionWalks);
 
   // auto vocabulary =
   // VocabularyFactory::createVocabulary(DIM)->getVocabulary();
