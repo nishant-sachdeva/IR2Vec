@@ -320,19 +320,22 @@ void addValueOperands(
     llvm::Instruction *inst,
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited) {
-  for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
-    llvm::Value *operand = inst->getOperand(i);
-    printObject(operand);
-    if (!operand->getType()->isPointerTy()) {
-      IR2VEC_DEBUG(std::cout << "\t\tOperand is not a pointer" << std::endl);
-      if (auto parent = dyn_cast<Instruction>(inst->getOperand(i))) {
-        if (Visited.find(parent) == Visited.end()) {
-          Visited[parent] = true;
-          RD->push_back(parent);
-        }
-      }
-    }
+
+  assert(dyn_cast<LoadInst>(inst) || dyn_cast<StoreInst>(inst));
+
+  auto value = inst->getOperand(0);
+  if (auto *parent = dyn_cast<Instruction>(value)) {
+    Visited[parent] = true;
+    RD->push_back(parent);
   }
+
+  // if (auto store = dyn_cast<StoreInst>(inst)) {
+  //   auto value = store->getValueOperand();
+  //   if (auto *parent = dyn_cast<Instruction>(value)) {
+  //     Visited[parent] = true;
+  //     RD->push_back(parent);
+  //   }
+  // }
 }
 
 void localMDHandler(
