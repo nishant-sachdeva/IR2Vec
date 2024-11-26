@@ -12,7 +12,16 @@
 #include "Vocabulary.h"
 #include "version.h"
 
+#include "llvm/IR/Function.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/PassManager.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/SourceMgr.h"
+#include "llvm/Transforms/Scalar/SimplifyCFG.h"
+#include "llvm/Transforms/Utils/Mem2Reg.h"
+
 #include <iostream>
 #include <stdio.h>
 #include <time.h>
@@ -247,6 +256,50 @@ void generatePeepholeSet(llvm::Module &M, WalkSet *walks, llvm::Function &F,
   return;
 }
 
+void runPassesOnModule(llvm::Module &M) {
+  FunctionPassManager FPM;
+
+  FPM.addPass(PromotePass());
+  FPM.addPass(SimplifyCFGPass());
+
+  ModulePassManager MPM;
+  MPM.addPass(createModuleToFunctionPassAdaptor(std::move(FPM)));
+
+  PassBuilder PB;
+  ModuleAnalysisManager MAM;
+  PB.registerModuleAnalyses(MAM);
+  MPM.run(M, MAM);
+}
+
+void preProcessing(llvm::Module &M) {
+  int k = 4; // max length of random walk
+  int c = 2; // min freq of each node
+  std::cout << "Generating peephole set\n";
+
+  // M.print(outs(), nullptr);
+  runPassesOnModule(M);
+  M.print(outs(), nullptr);
+
+  // std::vector<WalkSet> functionWalks;
+
+  // for (auto &F : M) {
+  //   WalkSet walks;
+  //   generatePeepholeSet(M, &walks, F, k, c);
+
+  //   std::cout << "Walks Generated : " << walks.size() << "\n\n\n";
+  //   if (walks.size() == 0) {
+  //     std::cout << "No walks\n";
+  //     continue;
+  //   } else {
+  //     for (auto &walk : walks) {
+  //       printWalk(walk);
+  //     }
+  //   }
+
+  //   functionWalks.push_back(walks);
+  // }
+}
+
 int main(int argc, char **argv) {
   cl::SetVersionPrinter(printVersion);
   cl::HideUnrelatedOptions(category);
@@ -289,35 +342,16 @@ int main(int argc, char **argv) {
   // if (failed)
   //   exit(1);
 
-  auto M = getLLVMIR();
-  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+  std::unique_ptr<llvm::Module> M = getLLVMIR();
 
-  int k = 4; // max length of random walk
-  int c = 2; // min freq of each node
-  std::cout << "Generating peephole set\n";
-
-  std::vector<WalkSet> functionWalks;
-
-  for (auto &F : *M) {
-    WalkSet walks;
-    generatePeepholeSet(*M, &walks, F, k, c);
-
-    std::cout << "Walks Generated : " << walks.size() << "\n\n\n";
-    if (walks.size() == 0) {
-      std::cout << "No walks\n";
-      continue;
-    } else {
-      for (auto &walk : walks) {
-        printWalk(walk);
-      }
-    }
-
-    functionWalks.push_back(walks);
-  }
+  preProcessing(*M);
 
   // here - we normalize the walks
   // std::cout << "Starting normalisaton " << std::endl;
   // normaliseWalks(functionWalks);
+
+  // auto vocabulary =
+  // VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
   // newly added
   // if (sym && !(funcName.empty())) {
