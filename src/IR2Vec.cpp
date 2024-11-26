@@ -316,6 +316,25 @@ std::string memdepType(MemDepResult *memdep) {
   return memDepType;
 }
 
+void addValueOperands(
+    llvm::Instruction *inst,
+    llvm::SmallVector<const llvm::Instruction *, 10> *RD,
+    std::unordered_map<const llvm::Instruction *, bool> &Visited) {
+  for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
+    llvm::Value *operand = inst->getOperand(i);
+    printObject(operand);
+    if (!operand->getType()->isPointerTy()) {
+      IR2VEC_DEBUG(std::cout << "\t\tOperand is not a pointer" << std::endl);
+      if (auto parent = dyn_cast<Instruction>(inst->getOperand(i))) {
+        if (Visited.find(parent) == Visited.end()) {
+          Visited[parent] = true;
+          RD->push_back(parent);
+        }
+      }
+    }
+  }
+}
+
 void localMDHandler(
     llvm::Instruction *inst, llvm::MemDepResult *memdep,
     llvm::MemoryDependenceResults *MDR, llvm::DependenceInfo &DA,
@@ -348,6 +367,7 @@ void localMDHandler(
     IR2VEC_DEBUG(
         std::cout << "\t> local - Not Output/Anti Dep - Checking further"
                   << std::endl);
+    addValueOperands(depIns, RD, Visited);
     llvm::MemDepResult localDep = MDR->getDependency(depIns);
     populateRDWithMemDep(depIns, &localDep, MDR, DA, RD, Visited);
   }
@@ -431,24 +451,12 @@ void calcReachingDefs(llvm::Instruction *inst,
     collectNonDepRD(inst, RD);
   } else {
     std::unordered_map<const llvm::Instruction *, bool> Visited;
-    for (unsigned i = 0; i < inst->getNumOperands(); ++i) {
-      llvm::Value *operand = inst->getOperand(i);
-
-      // IR2VEC_DEBUG(printOperand(operand));
-      // IR2VEC_DEBUG(printObject(operand->getType()));
-
-      if (!operand->getType()->isPointerTy()) {
-        if (auto parent = dyn_cast<Instruction>(inst->getOperand(i))) {
-          if (Visited.find(parent) == Visited.end()) {
-            Visited[parent] = true;
-            RD->push_back(parent);
-          }
-        }
-      }
-    }
     Visited[inst] = true;
-    MemDepResult memdep = MDR.getDependency(inst);
+
+    addValueOperands(inst, RD, Visited);
+
     IR2VEC_DEBUG(std::cout << "\t" << IR2Vec::getInstStr(inst));
+    MemDepResult memdep = MDR.getDependency(inst);
     populateRDWithMemDep(inst, &memdep, &MDR, DA, RD, Visited);
   }
 }
