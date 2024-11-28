@@ -19,6 +19,7 @@
 #include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/SourceMgr.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar/SimplifyCFG.h"
 #include "llvm/Transforms/Utils/Mem2Reg.h"
 
@@ -121,11 +122,31 @@ using WalkSet = std::vector<Peephole>;
 void printWalk(Peephole &walk) {
   for (auto &inst : walk) {
     printObject(inst);
+    if (PHINode *phiObj = dyn_cast<PHINode>(inst)) {
+      // std::cout << "\t\t - Phi Instruction here\n";
+    }
+  }
+}
+
+void remove_unconditional_branches(Peephole &walk) {
+  // std::cout << "Running unconditional branch elimination\n";
+  for (int i = 0; i < walk.size(); i++) {
+    Instruction *inst = walk[i];
+    assert(dyn_cast<Instruction>(inst));
+
+    if (auto *br = dyn_cast<BranchInst>(inst)) {
+      assert(br);
+      if (br->isUnconditional()) {
+        // std::cout << "ERASING branch Instruction \t"; printObject(br);
+        walk.erase(walk.begin() + i);
+        i--;
+      }
+    }
   }
 }
 
 void store_store_elimination(Peephole &walk) {
-  std::cout << "Running store store elimination\n";
+  // std::cout << "Running store store elimination\n";
   std::unordered_map<Value *, unsigned> storeMap;
 
   for (int i = 0; i < walk.size(); i++) {
@@ -146,8 +167,8 @@ void store_store_elimination(Peephole &walk) {
       if (storeMap.find(val) != storeMap.end()) {
         // Found a store to the same address, eliminate the previouse store
         unsigned prevStore = storeMap[val];
-        std::cout << "ERASING ";
-        printObject(walk[prevStore]);
+        // std::cout << "ERASING ";
+        // printObject(walk[prevStore]);
         walk.erase(walk.begin() + prevStore);
         // std::cout << "Done erasing" << std::endl;
         assert(prevStore < i);
@@ -183,11 +204,12 @@ void store_store_elimination(Peephole &walk) {
 void normaliseFunctionWalks(std::vector<WalkSet> &FunctionWalkSet) {
   for (WalkSet &functionWalk : FunctionWalkSet) {
     for (Peephole &walk : functionWalk) {
-      std::cout << "\n\nBefore store-store eliminatin\n\n";
-      printWalk(walk);
+      // std::cout << "\n\nBefore store-store eliminatin\n\n";
+      // printWalk(walk);
       store_store_elimination(walk);
-      std::cout << "\n\nAfter store-store eliminatin\n\n";
-      printWalk(walk);
+      remove_unconditional_branches(walk);
+      // std::cout << "\n\nAfter store-store eliminatin\n\n";
+      // printWalk(walk);
     }
   }
 }
@@ -272,6 +294,7 @@ void runPassesOnModule(llvm::Module &M) {
   llvm::FunctionPassManager FPM;
   FPM.addPass(llvm::PromotePass());
   FPM.addPass(llvm::SimplifyCFGPass());
+  FPM.addPass(llvm::InstCombinePass());
 
   llvm::ModulePassManager MPM;
   MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
@@ -280,12 +303,31 @@ void runPassesOnModule(llvm::Module &M) {
 
 void printFunctionWalks(std::vector<WalkSet> &functionWalks) {
   for (auto &walkSet : functionWalks) {
-    std::cout << "walks generated - " << walkSet.size() << "\n";
+    std::cout << "\n\n\n\nwalks generated - " << walkSet.size() << "\n";
     for (auto walk : walkSet) {
+      std::cout << "\n\nWalk: \n";
       printWalk(walk);
     }
   }
 }
+
+void removeTypeCastsFromModule(llvm::Module &M) {
+  for (auto &F : M) {
+    for (auto &BB : F) {
+      for (auto it = BB.begin(); it != BB.end();) {
+        Instruction *I = &*it++;
+
+        if (auto *cast = dyn_cast<ZExtInst>(I)) {
+          Value *val = cast->getOperand(0);
+          cast->replaceAllUsesWith(val);
+          cast->eraseFromParent();
+        }
+      }
+    }
+  }
+}
+
+void runCustomPassesOnModule(llvm::Module &M) { removeTypeCastsFromModule(M); }
 
 void preProcessing(llvm::Module &M) {
   int k = 4; // max length of random walk
@@ -294,6 +336,7 @@ void preProcessing(llvm::Module &M) {
 
   // M.print(outs(), nullptr);
   runPassesOnModule(M);
+  runCustomPassesOnModule(M);
   // M.print(outs(), nullptr);
 
   std::vector<WalkSet> functionWalks;
@@ -304,11 +347,13 @@ void preProcessing(llvm::Module &M) {
     functionWalks.push_back(walks);
   }
 
-  printFunctionWalks(functionWalks);
+  // // printFunctionWalks(functionWalks);
 
-  // here - we normalize the walks
+  // // here - we normalize the walks
   std::cout << "Starting normalisaton " << std::endl;
   normaliseFunctionWalks(functionWalks);
+
+  printFunctionWalks(functionWalks);
 }
 
 int main(int argc, char **argv) {
