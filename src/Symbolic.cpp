@@ -129,6 +129,65 @@ Vector IR2Vec_Symbolic::func2Vec(Function &F,
   return funcVector;
 }
 
+void IR2Vec_Symbolic::getInstructionEmbeddingsTup(
+    llvm::Instruction *I, IR2Vec::opcodeEmbedding &opcodeEmbedding,
+    IR2Vec::typeEmbedding &typeEmbedding,
+    IR2Vec::operandEmbedding &operandEmbedding) {
+
+  opcodeEmbedding = getValue(I->getOpcodeName());
+  scaleVector(opcodeEmbedding, WO);
+
+  auto type = I->getType();
+
+  if (type->isVoidTy()) {
+    typeEmbedding = getValue("voidTy");
+  } else if (type->isFloatingPointTy()) {
+    typeEmbedding = getValue("floatTy");
+  } else if (type->isIntegerTy()) {
+    typeEmbedding = getValue("integerTy");
+  } else if (type->isFunctionTy()) {
+    typeEmbedding = getValue("functionTy");
+  } else if (type->isStructTy()) {
+    typeEmbedding = getValue("structTy");
+  } else if (type->isArrayTy()) {
+    typeEmbedding = getValue("arrayTy");
+  } else if (type->isPointerTy()) {
+    typeEmbedding = getValue("pointerTy");
+  } else if (type->isVectorTy()) {
+    typeEmbedding = getValue("vectorTy");
+  } else if (type->isEmptyTy()) {
+    typeEmbedding = getValue("emptyTy");
+  } else if (type->isLabelTy()) {
+    typeEmbedding = getValue("labelTy");
+  } else if (type->isTokenTy()) {
+    typeEmbedding = getValue("tokenTy");
+  } else if (type->isMetadataTy()) {
+    typeEmbedding = getValue("metadataTy");
+  } else {
+    typeEmbedding = getValue("unknownTy");
+  }
+  scaleVector(typeEmbedding, WT);
+
+  for (unsigned i = 0; i < I->getNumOperands(); i++) {
+    Vector vec;
+    if (isa<Function>(I->getOperand(i))) {
+      vec = getValue("function");
+    } else if (isa<PointerType>(I->getOperand(i)->getType())) {
+      vec = getValue("pointer");
+    } else if (isa<Constant>(I->getOperand(i))) {
+      vec = getValue("constant");
+    } else {
+      vec = getValue("variable");
+    }
+    scaleVector(vec, WA);
+
+    std::transform(operandEmbedding.begin(), operandEmbedding.end(),
+                   vec.begin(), operandEmbedding.begin(), std::plus<double>());
+  }
+
+  // all of opEmbedding, typeEmbedding and operandEmbedding are calculated here
+}
+
 Vector IR2Vec_Symbolic::bb2Vec(BasicBlock &B,
                                SmallVector<Function *, 15> &funcStack) {
   auto It = bbVecMap.find(&B);
@@ -140,32 +199,6 @@ Vector IR2Vec_Symbolic::bb2Vec(BasicBlock &B,
   for (auto &I : B) {
     Vector instVector(DIM, 0);
     auto vec = getValue(I.getOpcodeName());
-    // if (isa<CallInst>(I)) {
-    //   auto ci = dyn_cast<CallInst>(&I);
-    //   // ci->dump();
-    //   Function *func = ci->getCalledFunction();
-    //   if (func) {
-    //     // if(!func->isDeclaration())
-    //     //     if(func != I.getParent()->getParent())
-    //     //         errs() << func->getName() << "\t" <<
-    //     //         I.getParent()->getParent()->getName() << "\n";
-    //     if (!func->isDeclaration() &&
-    //         std::find(funcStack.begin(), funcStack.end(), func) ==
-    //             funcStack.end()) {
-    //       auto funcVec = func2Vec(*func, funcStack);
-
-    //       std::transform(vec.begin(), vec.end(), funcVec.begin(),
-    //       vec.begin(),
-    //                      std::plus<double>());
-    //     }
-    //   } else {
-    //     IR2VEC_DEBUG(I.dump());
-    //     IR2VEC_DEBUG(errs() << "==========================Function
-    //     definition
-    //     "
-    //                          "not found==================\n");
-    //   }
-    // }
     scaleVector(vec, WO);
     std::transform(instVector.begin(), instVector.end(), vec.begin(),
                    instVector.begin(), std::plus<double>());
@@ -198,41 +231,6 @@ Vector IR2Vec_Symbolic::bb2Vec(BasicBlock &B,
     } else {
       vec = getValue("unknownTy");
     }
-
-    /*switch (I.getType()->getTypeID()) {
-    case 0:
-      vec = getValue("voidTy");
-      break;
-    case 1:
-    case 2:
-    case 3:
-    case 4:
-    case 5:
-    case 6:
-      vec = getValue("floatTy");
-      break;
-    case 11:
-      vec = getValue("integerTy");
-      break;
-    case 12:
-      vec = getValue("functionTy");
-      break;
-    case 13:
-      vec = getValue("structTy");
-      break;
-    case 14:
-      vec = getValue("arrayTy");
-      break;
-    case 15:
-      vec = getValue("pointerTy");
-      break;
-    case 16:
-      vec = getValue("vectorTy");
-      break;
-    default:
-      vec = getValue("unknownTy");
-    }*/
-
     scaleVector(vec, WT);
     std::transform(instVector.begin(), instVector.end(), vec.begin(),
                    instVector.begin(), std::plus<double>());

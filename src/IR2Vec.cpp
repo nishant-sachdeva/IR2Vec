@@ -119,6 +119,16 @@ int getRandomNumber(int x) {
 using Peephole = std::vector<llvm::Instruction *>;
 using WalkSet = std::vector<Peephole>;
 
+// Define the struct to hold the embeddings
+struct FunctionWalkEmbeddings {
+  std::string functionName; // Corresponding to functionName
+  WalkSet walkSet;          // Corresponding to walkSet
+
+  IR2Vec::opcodeEmbedding opcodeEmb;   // Corresponding to opcodeEmbedding
+  IR2Vec::typeEmbedding typeEmb;       // Corresponding to typeEmbedding
+  IR2Vec::operandEmbedding operandEmb; // Corresponding to operandEmbedding
+};
+
 void printWalk(Peephole &walk) {
   for (auto &inst : walk) {
     printObject(inst);
@@ -276,9 +286,10 @@ void load_load_elimination(Peephole &walk) {
   }
 }
 
-void normaliseFunctionWalks(std::vector<WalkSet> &FunctionWalkSet) {
-  for (WalkSet &functionWalk : FunctionWalkSet) {
-    for (Peephole &walk : functionWalk) {
+void normaliseFunctionWalks(
+    std::vector<FunctionWalkEmbeddings> &FunctionWalkSet) {
+  for (FunctionWalkEmbeddings &functionWalk : FunctionWalkSet) {
+    for (Peephole &walk : functionWalk.walkSet) {
       // std::cout << "\n\nBefore store-store eliminatin\n\n";
       // printWalk(walk);
       store_store_elimination(walk);
@@ -379,10 +390,11 @@ void runPassesOnModule(llvm::Module &M) {
   MPM.run(M, MAM);
 }
 
-void printFunctionWalks(std::vector<WalkSet> &functionWalks) {
-  for (auto &walkSet : functionWalks) {
-    std::cout << "\n\n\n\nwalks generated - " << walkSet.size() << "\n";
-    for (auto walk : walkSet) {
+void printFunctionWalks(std::vector<FunctionWalkEmbeddings> &functionWalks) {
+  for (auto &functionWalk : functionWalks) {
+    std::cout << "\n\n\n\nwalks generated - " << functionWalk.walkSet.size()
+              << "\n";
+    for (auto walk : functionWalk.walkSet) {
       std::cout << "\n\nWalk: \n";
       printWalk(walk);
     }
@@ -407,31 +419,81 @@ void removeTypeCastsFromModule(llvm::Module &M) {
 
 void runCustomPassesOnModule(llvm::Module &M) { removeTypeCastsFromModule(M); }
 
-void preProcessing(llvm::Module &M) {
+template <typename T>
+void addEmbeddingVecs(std::vector<T> &vec1, std::vector<T> &vec2) {
+  std::transform(vec1.begin(), vec1.end(), vec2.begin(), vec1.begin(),
+                 std::plus<T>());
+}
+
+void getInstructionEmbeddings(Instruction *inst,
+                              opcodeEmbedding &opcode_embedding,
+                              typeEmbedding &type_embedding,
+                              operandEmbedding &operand_embedding) {}
+
+void generateSymbolicWalkEmbeddings(FunctionWalkEmbeddings &functionWalk,
+                                    IR2Vec_Symbolic &SYM) {
+  for (Peephole &walk : functionWalk.walkSet) {
+    std::vector<int> embedding;
+    opcodeEmbedding opcode_embedding;
+    typeEmbedding type_embedding;
+    operandEmbedding operand_embedding;
+
+    for (Instruction *inst : walk) {
+      SYM.getInstructionEmbeddingsTup(inst, opcode_embedding, type_embedding,
+                                      operand_embedding);
+      getInstructionEmbeddings(inst, opcode_embedding, type_embedding,
+                               operand_embedding);
+    }
+
+    addEmbeddingVecs(functionWalk.opcodeEmb, opcode_embedding);
+    addEmbeddingVecs(functionWalk.typeEmb, type_embedding);
+    addEmbeddingVecs(functionWalk.operandEmb, operand_embedding);
+  }
+
+  std::cout << "Instruction Embedding tuple done for "
+            << functionWalk.functionName << std::endl;
+  return;
+}
+
+void calculateSymbolicWalkEmbeddings(
+    std::vector<FunctionWalkEmbeddings> &functionWalks, IR2Vec_Symbolic &SYM) {
+  for (auto &functionWalk : functionWalks) {
+    generateSymbolicWalkEmbeddings(functionWalk, SYM);
+  }
+}
+
+void getSymbolicEmbeddingSet(llvm::Module &M, IR2Vec::VocabTy &vocab) {
   int k = 4; // max length of random walk
   int c = 2; // min freq of each node
   std::cout << "Generating peephole set\n";
 
   // M.print(outs(), nullptr);
   runPassesOnModule(M);
+  IR2Vec_Symbolic SYM(M, vocab);
   // runCustomPassesOnModule(M);
   // M.print(outs(), nullptr);
 
-  std::vector<WalkSet> functionWalks;
+  std::vector<FunctionWalkEmbeddings> functionWalkEmbeddings;
 
   for (auto &F : M) {
     WalkSet walks;
     generatePeepholeSet(M, &walks, F, k, c);
-    functionWalks.push_back(walks);
+
+    FunctionWalkEmbeddings functionWalkEmbeddingObj;
+    functionWalkEmbeddingObj.functionName = F.getName();
+    functionWalkEmbeddingObj.walkSet = walks;
+    functionWalkEmbeddings.push_back(functionWalkEmbeddingObj);
   }
 
   // printFunctionWalks(functionWalks);
 
   // here - we normalize the walks
   std::cout << "Starting normalisaton " << std::endl;
-  normaliseFunctionWalks(functionWalks);
+  normaliseFunctionWalks(functionWalkEmbeddings);
 
-  printFunctionWalks(functionWalks);
+  printFunctionWalks(functionWalkEmbeddings);
+
+  calculateSymbolicWalkEmbeddings(functionWalkEmbeddings, SYM);
 }
 
 int main(int argc, char **argv) {
@@ -478,10 +540,9 @@ int main(int argc, char **argv) {
 
   std::unique_ptr<llvm::Module> M = getLLVMIR();
 
-  preProcessing(*M);
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
-  // auto vocabulary =
-  // VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+  getSymbolicEmbeddingSet(*M, vocabulary);
 
   // newly added
   // if (sym && !(funcName.empty())) {

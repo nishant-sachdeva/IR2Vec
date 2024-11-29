@@ -31,6 +31,11 @@ namespace IR2Vec {
 
 using Vector = std::vector<double>;
 using VocabTy = std::map<std::string, Vector>;
+
+using opcodeEmbedding = std::vector<double>;
+using typeEmbedding = std::vector<double>;
+using operandEmbedding = std::vector<double>;
+
 using abi::__cxa_demangle;
 
 extern bool fa;

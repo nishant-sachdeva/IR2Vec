@@ -30,6 +30,7 @@ private:
   IR2Vec::Vector getValue(std::string key);
   IR2Vec::Vector bb2Vec(llvm::BasicBlock &B,
                         llvm::SmallVector<llvm::Function *, 15> &funcStack);
+
   IR2Vec::Vector func2Vec(llvm::Function &F,
                           llvm::SmallVector<llvm::Function *, 15> &funcStack);
   std::string res;
@@ -48,6 +49,11 @@ public:
   void generateSymbolicEncodings(std::ostream *o = nullptr);
   void generateSymbolicEncodingsForFunction(std::ostream *o = nullptr,
                                             std::string name = "");
+  void getInstructionEmbeddingsTup(llvm::Instruction *I,
+                                   IR2Vec::opcodeEmbedding &opcodeEmbedding,
+                                   IR2Vec::typeEmbedding &typeEmbedding,
+                                   IR2Vec::operandEmbedding &operandEmbedding);
+
   llvm::SmallMapVector<const llvm::Instruction *, IR2Vec::Vector, 128>
   getInstVecMap() {
     return instVecMap;
