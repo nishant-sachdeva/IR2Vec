@@ -31,6 +31,13 @@ private:
   IR2Vec::Vector bb2Vec(llvm::BasicBlock &B,
                         llvm::SmallVector<llvm::Function *, 15> &funcStack);
 
+  void calculateOpcodeEmbedding(llvm::Instruction *I,
+                                IR2Vec::opcodeEmbedding &opcodeEmbedding);
+  void calculateTypeEmbedding(llvm::Instruction *I,
+                              IR2Vec::typeEmbedding &typeEmbedding);
+  void calculateOperandEmbedding(llvm::Instruction *I,
+                                 IR2Vec::operandEmbedding &operandEmbedding);
+
   IR2Vec::Vector func2Vec(llvm::Function &F,
                           llvm::SmallVector<llvm::Function *, 15> &funcStack);
   std::string res;

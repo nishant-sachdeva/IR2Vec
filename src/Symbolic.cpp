@@ -129,14 +129,14 @@ Vector IR2Vec_Symbolic::func2Vec(Function &F,
   return funcVector;
 }
 
-void IR2Vec_Symbolic::getInstructionEmbeddingsTup(
-    llvm::Instruction *I, IR2Vec::opcodeEmbedding &opcodeEmbedding,
-    IR2Vec::typeEmbedding &typeEmbedding,
-    IR2Vec::operandEmbedding &operandEmbedding) {
-
+void IR2Vec_Symbolic::calculateOpcodeEmbedding(
+    llvm::Instruction *I, IR2Vec::opcodeEmbedding &opcodeEmbedding) {
   opcodeEmbedding = getValue(I->getOpcodeName());
   scaleVector(opcodeEmbedding, WO);
+}
 
+void IR2Vec_Symbolic::calculateTypeEmbedding(
+    llvm::Instruction *I, IR2Vec::typeEmbedding &typeEmbedding) {
   auto type = I->getType();
 
   if (type->isVoidTy()) {
@@ -167,7 +167,10 @@ void IR2Vec_Symbolic::getInstructionEmbeddingsTup(
     typeEmbedding = getValue("unknownTy");
   }
   scaleVector(typeEmbedding, WT);
+}
 
+void IR2Vec_Symbolic::calculateOperandEmbedding(
+    llvm::Instruction *I, IR2Vec::operandEmbedding &operandEmbedding) {
   for (unsigned i = 0; i < I->getNumOperands(); i++) {
     Vector vec;
     if (isa<Function>(I->getOperand(i))) {
@@ -184,8 +187,18 @@ void IR2Vec_Symbolic::getInstructionEmbeddingsTup(
     std::transform(operandEmbedding.begin(), operandEmbedding.end(),
                    vec.begin(), operandEmbedding.begin(), std::plus<double>());
   }
+}
 
-  // all of opEmbedding, typeEmbedding and operandEmbedding are calculated here
+void IR2Vec_Symbolic::getInstructionEmbeddingsTup(
+    llvm::Instruction *I, IR2Vec::opcodeEmbedding &opcodeEmbedding,
+    IR2Vec::typeEmbedding &typeEmbedding,
+    IR2Vec::operandEmbedding &operandEmbedding) {
+
+  calculateOpcodeEmbedding(I, opcodeEmbedding);
+  calculateTypeEmbedding(I, typeEmbedding);
+  calculateOperandEmbedding(I, operandEmbedding);
+
+  return;
 }
 
 Vector IR2Vec_Symbolic::bb2Vec(BasicBlock &B,
