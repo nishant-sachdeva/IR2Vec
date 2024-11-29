@@ -122,8 +122,50 @@ using WalkSet = std::vector<Peephole>;
 void printWalk(Peephole &walk) {
   for (auto &inst : walk) {
     printObject(inst);
+  }
+}
+
+void resolvePhiInst(Peephole &walk) {
+  // std::cout << "Resolving phi instructions\n";
+  for (int i = 0; i < walk.size(); i++) {
+    Instruction *inst = walk[i];
+    assert(dyn_cast<Instruction>(inst));
+
     if (PHINode *phiObj = dyn_cast<PHINode>(inst)) {
-      // std::cout << "\t\t - Phi Instruction here\n";
+      if (phiObj->getNumIncomingValues() == 0) {
+        continue;
+      }
+
+      Value *selectedValue = phiObj->getIncomingValue(0);
+
+      printObject(phiObj);
+      std::cout << "\tphiObj value\t";
+      printObject(selectedValue);
+
+      LLVMContext &context = phiObj->getContext();
+      IRBuilder<> builder(context);
+
+      Instruction *newInst = nullptr;
+
+      // Check if the selectedValue is a pointer
+      if (selectedValue->getType()->isPointerTy()) {
+        // Create a load instruction for pointer types
+        newInst = dyn_cast<Instruction>(builder.CreateLoad(
+            selectedValue->getType(), selectedValue, phiObj->getName()));
+      } else {
+        // Create a direct scalar assignment (in LLVM, this is effectively an
+        // alias or move)
+        auto *assignInst =
+            builder.CreateLoad(selectedValue->getType(), selectedValue);
+        assignInst->setName(phiObj->getName());
+        newInst = dyn_cast<Instruction>(assignInst);
+      }
+
+      std::cout << "\tnewInst\t";
+      printObject(newInst);
+      std::cout << std::endl;
+
+      walk[i] = std::move(newInst);
     }
   }
 }
@@ -145,6 +187,19 @@ void remove_unconditional_branches(Peephole &walk) {
   }
 }
 
+void remove_type_extensions(Peephole &walk) {
+  for (int i = 0; i < walk.size(); i++) {
+    Instruction *inst = walk[i];
+    assert(dyn_cast<Instruction>(inst));
+
+    if (isa<ZExtInst>(inst) || isa<SExtInst>(inst) || isa<FPExtInst>(inst) ||
+        isa<FPTruncInst>(inst) || isa<TruncInst>(inst)) {
+      walk.erase(walk.begin() + i);
+      i--;
+    }
+  }
+}
+
 void store_store_elimination(Peephole &walk) {
   // std::cout << "Running store store elimination\n";
   std::unordered_map<Value *, unsigned> storeMap;
@@ -155,41 +210,61 @@ void store_store_elimination(Peephole &walk) {
 
     if (auto *store = dyn_cast<StoreInst>(inst)) {
       assert(store);
-      // std::cout << "Got Store instruction";
-      // printObject(store);
-      // std::cout << "\n";
-
       Value *val = store->getPointerOperand();
-      // std::cout << "Got Value";
-      // printObject(val);
-      // std::cout << "\n";
-
       if (storeMap.find(val) != storeMap.end()) {
-        // Found a store to the same address, eliminate the previouse store
         unsigned prevStore = storeMap[val];
-        // std::cout << "ERASING ";
-        // printObject(walk[prevStore]);
         walk.erase(walk.begin() + prevStore);
-        // std::cout << "Done erasing" << std::endl;
         assert(prevStore < i);
         i--;
       }
       storeMap[val] = i;
-      // std::cout << "Done storing" << std::endl;
     } else if (auto *load = dyn_cast<LoadInst>(inst)) {
       assert(load);
-      // std::cout << "Got Load instruction";
-      // printObject(load);
-      // std::cout << "\n";
-
       Value *val = load->getPointerOperand();
-      // std::cout << "Got load value";
-      // printObject(val);
-      // std::cout << std::endl;
-
       if (storeMap.find(val) != storeMap.end()) {
-        // std::cout << "Found a load from the same address, remove the store "
-        //  "instruction from the map\n";
+        storeMap.erase(val);
+      }
+    }
+  }
+
+  if (storeMap.size() > 0) {
+    // std::cout << "Emptying store map" << std::endl;
+    storeMap.clear();
+  }
+}
+
+void load_load_elimination(Peephole &walk) {
+  /*
+    I1 : %x = load %9
+    ...
+    I2 : %y = load %9
+
+    1. if between i1 and i2, there are no instructions that change %9
+    then I2 is a redundant load
+    2. If we don't replace all follow up occurrences of %y - we loose flow
+    information
+                TODO:: for now, it is acceptable since we are only taking
+    symbolic values
+  */
+  std::unordered_map<Value *, unsigned> storeMap;
+
+  for (int i = 0; i < walk.size(); i++) {
+    Instruction *inst = walk[i];
+    assert(dyn_cast<Instruction>(inst));
+
+    if (auto *loadInst = dyn_cast<LoadInst>(inst)) {
+      assert(loadInst);
+      Value *val = loadInst->getPointerOperand();
+      if (storeMap.find(val) != storeMap.end()) {
+        walk.erase(walk.begin() + i);
+        i--;
+      } else {
+        storeMap[val] = i;
+      }
+    } else if (auto *storeInst = dyn_cast<StoreInst>(inst)) {
+      assert(storeInst);
+      Value *val = storeInst->getPointerOperand();
+      if (storeMap.find(val) != storeMap.end()) {
         storeMap.erase(val);
       }
     }
@@ -207,7 +282,10 @@ void normaliseFunctionWalks(std::vector<WalkSet> &FunctionWalkSet) {
       // std::cout << "\n\nBefore store-store eliminatin\n\n";
       // printWalk(walk);
       store_store_elimination(walk);
+      load_load_elimination(walk);
       remove_unconditional_branches(walk);
+      // resolvePhiInst(walk);
+      remove_type_extensions(walk);
       // std::cout << "\n\nAfter store-store eliminatin\n\n";
       // printWalk(walk);
     }
@@ -293,8 +371,8 @@ void runPassesOnModule(llvm::Module &M) {
 
   llvm::FunctionPassManager FPM;
   FPM.addPass(llvm::PromotePass());
-  FPM.addPass(llvm::SimplifyCFGPass());
   FPM.addPass(llvm::InstCombinePass());
+  FPM.addPass(llvm::SimplifyCFGPass());
 
   llvm::ModulePassManager MPM;
   MPM.addPass(llvm::createModuleToFunctionPassAdaptor(std::move(FPM)));
@@ -336,7 +414,7 @@ void preProcessing(llvm::Module &M) {
 
   // M.print(outs(), nullptr);
   runPassesOnModule(M);
-  runCustomPassesOnModule(M);
+  // runCustomPassesOnModule(M);
   // M.print(outs(), nullptr);
 
   std::vector<WalkSet> functionWalks;
@@ -347,9 +425,9 @@ void preProcessing(llvm::Module &M) {
     functionWalks.push_back(walks);
   }
 
-  // // printFunctionWalks(functionWalks);
+  // printFunctionWalks(functionWalks);
 
-  // // here - we normalize the walks
+  // here - we normalize the walks
   std::cout << "Starting normalisaton " << std::endl;
   normaliseFunctionWalks(functionWalks);
 
