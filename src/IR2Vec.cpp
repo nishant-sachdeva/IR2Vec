@@ -121,6 +121,10 @@ using WalkSet = std::vector<Peephole>;
 
 // Define the struct to hold the embeddings
 struct FunctionWalkEmbeddings {
+  std::vector<std::string>
+      functionStrings; // collect global strings for each function
+  std::vector<std::string>
+      functionCalls; // functionNames for function calls made in the walkSet
   std::string functionName; // Corresponding to functionName
   WalkSet walkSet;          // Corresponding to walkSet
 
@@ -425,11 +429,6 @@ void addEmbeddingVecs(std::vector<T> &vec1, std::vector<T> &vec2) {
                  std::plus<T>());
 }
 
-void getInstructionEmbeddings(Instruction *inst,
-                              opcodeEmbedding &opcode_embedding,
-                              typeEmbedding &type_embedding,
-                              operandEmbedding &operand_embedding) {}
-
 void generateSymbolicWalkEmbeddings(FunctionWalkEmbeddings &functionWalk,
                                     IR2Vec_Symbolic &SYM) {
   for (Peephole &walk : functionWalk.walkSet) {
@@ -441,8 +440,6 @@ void generateSymbolicWalkEmbeddings(FunctionWalkEmbeddings &functionWalk,
     for (Instruction *inst : walk) {
       SYM.getInstructionEmbeddingsTup(inst, opcode_embedding, type_embedding,
                                       operand_embedding);
-      getInstructionEmbeddings(inst, opcode_embedding, type_embedding,
-                               operand_embedding);
     }
 
     addEmbeddingVecs(functionWalk.opcodeEmb, opcode_embedding);
@@ -462,6 +459,29 @@ void calculateSymbolicWalkEmbeddings(
   }
 }
 
+std::vector<std::string> getStringsFromFunction(llvm::Function &F) {
+  std::vector<std::string> strList;
+  for (auto &BB : F) {
+    for (auto &Inst : BB) {
+      for (unsigned idx = 0; idx < Inst.getNumOperands(); idx++) {
+        if (auto *val =
+                llvm::dyn_cast<llvm::GlobalVariable>(Inst.getOperand(idx))) {
+          if (val->hasInitializer()) {
+            if (auto *cda = llvm::dyn_cast<llvm::ConstantDataArray>(
+                    val->getInitializer())) {
+              if (cda->isString()) {
+                std::string str = cda->getAsString().str();
+                strList.push_back(str);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return strList;
+}
+
 void getSymbolicEmbeddingSet(llvm::Module &M, IR2Vec::VocabTy &vocab) {
   int k = 4; // max length of random walk
   int c = 2; // min freq of each node
@@ -474,15 +494,25 @@ void getSymbolicEmbeddingSet(llvm::Module &M, IR2Vec::VocabTy &vocab) {
   // M.print(outs(), nullptr);
 
   std::vector<FunctionWalkEmbeddings> functionWalkEmbeddings;
+  // std::unordered_map<std::string, FunctionWalkEmbeddings> functionWalkMap;
 
   for (auto &F : M) {
     WalkSet walks;
+    std::vector<std::string> strList = getStringsFromFunction(F);
+
+    std::cout << "strList for " << F.getName().data() << " is "
+              << strList.size() << std::endl;
+
     generatePeepholeSet(M, &walks, F, k, c);
 
     FunctionWalkEmbeddings functionWalkEmbeddingObj;
-    functionWalkEmbeddingObj.functionName = F.getName();
+    std::string functionName = F.getName().data();
+    functionWalkEmbeddingObj.functionName = functionName;
     functionWalkEmbeddingObj.walkSet = walks;
+    functionWalkEmbeddingObj.functionStrings = strList;
     functionWalkEmbeddings.push_back(functionWalkEmbeddingObj);
+
+    // functionWalkMap[functionName] = functionWalkEmbeddingObj;
   }
 
   // printFunctionWalks(functionWalks);
