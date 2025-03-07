@@ -1,7 +1,5 @@
 var searchData=
 [
-  ['subset_0',['subset',['../structsubset.html',1,'']]],
-  ['suffix_1',['suffix',['../structsuffix.html',1,'']]],
-  ['suffixtrie_2',['SuffixTrie',['../classSuffixTrie.html',1,'']]],
-  ['suffixtrienode_3',['SuffixTrieNode',['../classSuffixTrieNode.html',1,'']]]
+  ['rescal_0',['RESCAL',['../classOpenKE_1_1module_1_1model_1_1RESCAL_1_1RESCAL.html',1,'OpenKE::module::model::RESCAL']]],
+  ['rotate_1',['RotatE',['../classOpenKE_1_1module_1_1model_1_1RotatE_1_1RotatE.html',1,'OpenKE::module::model::RotatE']]]
 ];

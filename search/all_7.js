@@ -1,8 +1,11 @@
 var searchData=
 [
-  ['data_0',['Data',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md53',1,'Data'],['../md_docs_2version__upgrade__process.html#autotoc_md7',1,'Preprocesing the data']]],
-  ['datasets_1',['Step 1: Import datasets',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md56',1,'']]],
-  ['device_20mapping_2',['Heterogeneous Device Mapping',['../md_experiments_2README.html#autotoc_md16',1,'']]],
-  ['directory_20structure_3',['Directory structure',['../md_experiments_2README.html#autotoc_md18',1,'Directory structure'],['../md_experiments_2README.html#autotoc_md21',1,'Directory structure']]],
-  ['distmult_4',['DistMult',['../classmodels_1_1DistMult_1_1DistMult.html',1,'models::DistMult']]]
+  ['edge_0',['Edge',['../structEdge.html',1,'']]],
+  ['embedding_20vocabulary_1',['Embedding Vocabulary',['..//github/workspace/seed_embeddings/README.md#autotoc_md64',1,'Files used to generate Seed Embedding Vocabulary'],['..//github/workspace/seed_embeddings/README.md#autotoc_md60',1,'Generation of Seed Embedding Vocabulary']]],
+  ['embedding_20vocabulary_2',['Step 3: Training TransE to generate seed embedding vocabulary',['..//github/workspace/seed_embeddings/README.md#autotoc_md65',1,'']]],
+  ['embeddings_3',['Embeddings',['../classIR2Vec_1_1Embeddings.html',1,'IR2Vec::Embeddings'],['../md_README.html#autotoc_md40',1,'Flow-Aware Embeddings'],['../md_README.html#autotoc_md41',1,'Symbolic Embeddings']]],
+  ['embeddings_4',['Training TransE to generate embeddings',['..//github/workspace/seed_embeddings/README.md#autotoc_md68',1,'']]],
+  ['example_5',['Example',['../md_README.html#autotoc_md48',1,'']]],
+  ['example_20command_6',['Example Command',['..//github/workspace/seed_embeddings/README.md#autotoc_md69',1,'']]],
+  ['experiments_7',['Experiments',['../md_README.html#autotoc_md50',1,'']]]
 ];

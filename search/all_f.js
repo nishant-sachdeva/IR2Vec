@@ -1,9 +1,7 @@
 var searchData=
 [
-  ['mapping_0',['Heterogeneous Device Mapping',['../md_experiments_2README.html#autotoc_md16',1,'']]],
-  ['matrix_1',['Getting the embedding matrix',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md68',1,'']]],
-  ['md_2',['README.md',['../md_docs_2spec__compilation.html',1,'']]],
-  ['model_3',['model',['../classmodels_1_1Model_1_1model.html',1,'models::Model']]],
-  ['model_4',['Model',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md71',1,'']]],
-  ['models_5',['Step 4: Train models',['../md_seed__embeddings_2OpenKE_2README.html#autotoc_md59',1,'']]]
+  ['negativesampling_0',['NegativeSampling',['../classOpenKE_1_1module_1_1strategy_1_1NegativeSampling_1_1NegativeSampling.html',1,'OpenKE::module::strategy::NegativeSampling']]],
+  ['node_1',['Node',['../structNode.html',1,'']]],
+  ['node_2',['node',['../classnode.html',1,'']]],
+  ['note_3',['Note',['..//github/workspace/experiments/README.md#autotoc_md19',1,'Note'],['../md_README.html#autotoc_md51',1,'Note']]]
 ];
