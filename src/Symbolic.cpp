@@ -66,9 +66,8 @@ void IR2Vec_Symbolic::generateSymbolicEncodings(std::ostream *o) {
       res += std::to_string(cls) + "\t";
 
     for (auto i : pgmVector) {
-      if ((i <= 0.0001 && i > 0) || (i < 0 && i >= -0.0001)) {
-        i = 0;
-      }
+      if (std::abs(i) <= 1e-4f)
+        i = 0.0f;
       res += std::to_string(i) + "\t";
     }
     res += "\n";

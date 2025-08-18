@@ -85,9 +85,8 @@ std::string IR2Vec::updatedRes(IR2Vec::Vector &tmp, llvm::Function *f,
 
   res += "=\t";
   for (auto i : tmp) {
-    if ((i <= 0.0001 && i > 0) || (i < 0 && i >= -0.0001)) {
-      i = 0;
-    }
+    if (std::abs(i) <= 1e-4f)
+      i = 0.0f;
     res += std::to_string(i) + "\t";
   }
 
