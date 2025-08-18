@@ -28,7 +28,7 @@ class Embeddings {
   llvm::SmallMapVector<const llvm::BasicBlock *, IR2Vec::Vector, 16> bbVecMap;
   llvm::SmallMapVector<const llvm::Function *, Vector, 16> funcVecMap;
   Vector pgmVector;
-  std::map<std::string, IR2Vec::Vector> vocabulary;
+  std::unordered_map<std::string, IR2Vec::Vector> vocabulary;
 
 public:
   Embeddings() = default;
