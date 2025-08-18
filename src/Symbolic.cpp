@@ -28,7 +28,6 @@ using namespace IR2Vec;
 using abi::__cxa_demangle;
 
 bool IR2Vec_Symbolic::getValue(std::string key, IR2Vec::Vector &out) {
-  Vector vec(DIM, 0);
   if (auto it = vocabulary.find(std::string(key)); it != vocabulary.end()) {
     out = it->second;
     return true;
@@ -67,7 +66,7 @@ void IR2Vec_Symbolic::generateSymbolicEncodings(std::ostream *o) {
 
     for (auto i : pgmVector) {
       if (std::abs(i) <= 1e-4f)
-        i = 0.0f;
+        i = 0;
       res += std::to_string(i) + "\t";
     }
     res += "\n";

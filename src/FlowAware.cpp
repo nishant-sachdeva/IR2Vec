@@ -96,14 +96,16 @@ void IR2Vec_FA::collectWriteDefsMap(Module &M) {
   }
 }
 
-Vector IR2Vec_FA::getValue(std::string key) {
-  Vector vec(DIM, 0);
-  if (vocabulary.find(key) == vocabulary.end()) {
-    IR2VEC_DEBUG(errs() << "cannot find key in map : " << key << "\n");
-    dataMissCounter++;
-  } else
-    vec = vocabulary[key];
-  return vec;
+bool IR2Vec_FA::getValue(std::string key, IR2Vec::Vector &out) {
+  if (auto it = vocabulary.find(std::string(key)); it != vocabulary.end()) {
+    out = it->second;
+    return true;
+  }
+
+  out.assign(DIM, 0);
+  dataMissCounter++;
+  IR2VEC_DEBUG(errs() << "cannot find key in map : " << key << "\n");
+  return false;
 }
 
 // Function to update funcVecMap of function with vectors of it's callee list
@@ -169,9 +171,8 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
       res += std::to_string(cls) + "\t";
 
     for (auto i : pgmVector) {
-      if ((i <= 0.0001 && i > 0) || (i < 0 && i >= -0.0001)) {
-        i = 0;
-      }
+      if (std::abs(i) <= 1e-4f)
+        i = 0.0f;
       res += std::to_string(i) + "\t";
     }
     res += "\n";
@@ -537,11 +538,11 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
     bbVecMap[b] = bbVector;
     IR2VEC_DEBUG(outs() << "-------------------------------------------\n");
-    for (auto i : bbVector) {
-      if ((i <= 0.0001 && i > 0) || (i < 0 && i >= -0.0001)) {
-        i = 0;
-      }
-    }
+
+    std::for_each(bbVector.begin(), bbVector.end(), [](double &x) {
+      if (std::abs(x) <= 1e-4f)
+        x = 0;
+    });
 
     std::transform(funcVector.begin(), funcVector.end(), bbVector.begin(),
                    funcVector.begin(), std::plus<double>());
@@ -864,11 +865,11 @@ void IR2Vec_FA::getPartialVec(
     return;
   }
 
-  Vector instVector(DIM, 0);
+  Vector instVector(DIM, 0), opcode_vec;
   StringRef opcodeName = I.getOpcodeName();
-  auto vec = getValue(opcodeName.str());
+  getValue(opcodeName.str(), opcode_vec);
   IR2VEC_DEBUG(I.print(outs()); outs() << "\n");
-  std::transform(instVector.begin(), instVector.end(), vec.begin(),
+  std::transform(instVector.begin(), instVector.end(), opcode_vec.begin(),
                  instVector.begin(), std::plus<double>());
   partialInstValMap[&I] = instVector;
 
@@ -878,38 +879,39 @@ void IR2Vec_FA::getPartialVec(
                  i.first->print(outs());
                  outs() << "\n";
                });
-  auto type = I.getType();
 
+  auto type = I.getType();
+  Vector type_vec;
   if (type->isVoidTy()) {
-    vec = getValue("voidTy");
+    getValue("voidTy", type_vec);
   } else if (type->isFloatingPointTy()) {
-    vec = getValue("floatTy");
+    getValue("floatTy", type_vec);
   } else if (type->isIntegerTy()) {
-    vec = getValue("integerTy");
+    getValue("integerTy", type_vec);
   } else if (type->isFunctionTy()) {
-    vec = getValue("functionTy");
+    getValue("functionTy", type_vec);
   } else if (type->isStructTy()) {
-    vec = getValue("structTy");
+    getValue("structTy", type_vec);
   } else if (type->isArrayTy()) {
-    vec = getValue("arrayTy");
+    getValue("arrayTy", type_vec);
   } else if (type->isPointerTy()) {
-    vec = getValue("pointerTy");
+    getValue("pointerTy", type_vec);
   } else if (type->isVectorTy()) {
-    vec = getValue("vectorTy");
+    getValue("vectorTy", type_vec);
   } else if (type->isEmptyTy()) {
-    vec = getValue("emptyTy");
+    getValue("emptyTy", type_vec);
   } else if (type->isLabelTy()) {
-    vec = getValue("labelTy");
+    getValue("labelTy", type_vec);
   } else if (type->isTokenTy()) {
-    vec = getValue("tokenTy");
+    getValue("tokenTy", type_vec);
   } else if (type->isMetadataTy()) {
-    vec = getValue("metadataTy");
+    getValue("metadataTy", type_vec);
   } else {
-    vec = getValue("unknownTy");
+    getValue("unknownTy", type_vec);
   }
 
-  scaleVector(vec, WT);
-  std::transform(instVector.begin(), instVector.end(), vec.begin(),
+  scaleVector(type_vec, WT);
+  std::transform(instVector.begin(), instVector.end(), type_vec.begin(),
                  instVector.begin(), std::plus<double>());
 
   partialInstValMap[&I] = instVector;
@@ -940,7 +942,8 @@ void IR2Vec_FA::solveInsts(
       B.push_back(tmp);
       for (unsigned i = 0; i < inst->getNumOperands(); i++) {
         if (isa<Function>(inst->getOperand(i))) {
-          auto f = getValue("function");
+          Vector f;
+          getValue("function", f);
           if (isa<CallInst>(inst)) {
             auto ci = dyn_cast<CallInst>(inst);
             Function *func = ci->getCalledFunction();
@@ -965,7 +968,8 @@ void IR2Vec_FA::solveInsts(
           B.push_back(vec);
         } else if (isa<Constant>(inst->getOperand(i)) &&
                    !isa<PointerType>(inst->getOperand(i)->getType())) {
-          auto c = getValue("constant");
+          Vector c;
+          getValue("constant", c);
           auto svtmp = c;
           scaleVector(svtmp, WA);
           std::vector<double> vtmp(svtmp.begin(), svtmp.end());
@@ -978,7 +982,8 @@ void IR2Vec_FA::solveInsts(
           IR2VEC_DEBUG(outs() << vec.back() << "\n");
           B.push_back(vec);
         } else if (isa<BasicBlock>(inst->getOperand(i))) {
-          auto l = getValue("label");
+          Vector l;
+          getValue("label", l);
           auto svtmp = l;
           scaleVector(svtmp, WA);
           std::vector<double> vtmp(svtmp.begin(), svtmp.end());
@@ -1022,7 +1027,8 @@ void IR2Vec_FA::solveInsts(
               }
             }
           } else if (isa<PointerType>(inst->getOperand(i)->getType())) {
-            auto l = getValue("pointer");
+            Vector l;
+            getValue("pointer", l);
             auto svtmp = l;
             scaleVector(svtmp, WA);
             std::vector<double> vtmp(svtmp.begin(), svtmp.end());
@@ -1035,7 +1041,8 @@ void IR2Vec_FA::solveInsts(
             IR2VEC_DEBUG(outs() << vec.back() << "\n");
             B.push_back(vec);
           } else {
-            auto l = getValue("variable");
+            Vector l;
+            getValue("variable", l);
             auto svtmp = l;
             scaleVector(svtmp, WA);
             std::vector<double> vtmp(svtmp.begin(), svtmp.end());
@@ -1137,9 +1144,9 @@ void IR2Vec_FA::solveSingleComponent(
   RDList.clear();
 
   for (unsigned i = 0; i < I.getNumOperands() /*&& !isCyclic*/; i++) {
-    Vector vecOp(DIM, 0);
+    Vector vecOp;
     if (isa<Function>(I.getOperand(i))) {
-      vecOp = getValue("function");
+      getValue("function", vecOp);
       if (isa<CallInst>(I)) {
         auto ci = dyn_cast<CallInst>(&I);
         Function *func = ci->getCalledFunction();
@@ -1156,17 +1163,17 @@ void IR2Vec_FA::solveSingleComponent(
     // non-numeric/alphabetic constants are also caught as pointer types
     else if (isa<Constant>(I.getOperand(i)) &&
              !isa<PointerType>(I.getOperand(i)->getType())) {
-      vecOp = getValue("constant");
+      getValue("constant", vecOp);
     } else if (isa<BasicBlock>(I.getOperand(i))) {
-      vecOp = getValue("label");
+      getValue("label", vecOp);
     } else {
       if (isa<Instruction>(I.getOperand(i))) {
         auto RD = getReachingDefs(&I, i);
         RDList.insert(RDList.end(), RD.begin(), RD.end());
       } else if (isa<PointerType>(I.getOperand(i)->getType())) {
-        vecOp = getValue("pointer");
+        getValue("pointer", vecOp);
       } else
-        vecOp = getValue("variable");
+        getValue("variable", vecOp);
     }
 
     std::transform(VecArgs.begin(), VecArgs.end(), vecOp.begin(),
@@ -1237,11 +1244,11 @@ void IR2Vec_FA::inst2Vec(
     return;
   }
 
-  Vector instVector(DIM, 0);
+  Vector instVector(DIM, 0), opcode_vec;
   StringRef opcodeName = I.getOpcodeName();
-  auto vec = getValue(opcodeName.str());
+  getValue(opcodeName.str(), opcode_vec);
   IR2VEC_DEBUG(I.print(outs()); outs() << "\n");
-  std::transform(instVector.begin(), instVector.end(), vec.begin(),
+  std::transform(instVector.begin(), instVector.end(), opcode_vec.begin(),
                  instVector.begin(), std::plus<double>());
   partialInstValMap[&I] = instVector;
 
@@ -1253,36 +1260,36 @@ void IR2Vec_FA::inst2Vec(
                });
 
   auto type = I.getType();
-
+  Vector type_vec;
   if (type->isVoidTy()) {
-    vec = getValue("voidTy");
+    getValue("voidTy", type_vec);
   } else if (type->isFloatingPointTy()) {
-    vec = getValue("floatTy");
+    getValue("floatTy", type_vec);
   } else if (type->isIntegerTy()) {
-    vec = getValue("integerTy");
+    getValue("integerTy", type_vec);
   } else if (type->isFunctionTy()) {
-    vec = getValue("functionTy");
+    getValue("functionTy", type_vec);
   } else if (type->isStructTy()) {
-    vec = getValue("structTy");
+    getValue("structTy", type_vec);
   } else if (type->isArrayTy()) {
-    vec = getValue("arrayTy");
+    getValue("arrayTy", type_vec);
   } else if (type->isPointerTy()) {
-    vec = getValue("pointerTy");
+    getValue("pointerTy", type_vec);
   } else if (type->isVectorTy()) {
-    vec = getValue("vectorTy");
+    getValue("vectorTy", type_vec);
   } else if (type->isEmptyTy()) {
-    vec = getValue("emptyTy");
+    getValue("emptyTy", type_vec);
   } else if (type->isLabelTy()) {
-    vec = getValue("labelTy");
+    getValue("labelTy", type_vec);
   } else if (type->isTokenTy()) {
-    vec = getValue("tokenTy");
+    getValue("tokenTy", type_vec);
   } else if (type->isMetadataTy()) {
-    vec = getValue("metadataTy");
+    getValue("metadataTy", type_vec);
   } else {
-    vec = getValue("unknownTy");
+    getValue("unknownTy", type_vec);
   }
-  scaleVector(vec, WT);
-  std::transform(instVector.begin(), instVector.end(), vec.begin(),
+  scaleVector(type_vec, WT);
+  std::transform(instVector.begin(), instVector.end(), type_vec.begin(),
                  instVector.begin(), std::plus<double>());
   partialInstValMap[&I] = instVector;
 
@@ -1295,9 +1302,9 @@ void IR2Vec_FA::inst2Vec(
   RDList.clear();
 
   for (unsigned i = 0; i < I.getNumOperands() /*&& !isCyclic*/; i++) {
-    Vector vecOp(DIM, 0);
+    Vector vecOp;
     if (isa<Function>(I.getOperand(i))) {
-      vecOp = getValue("function");
+      getValue("function", vecOp);
       if (isa<CallInst>(I)) {
         auto ci = dyn_cast<CallInst>(&I);
         Function *func = ci->getCalledFunction();
@@ -1314,17 +1321,17 @@ void IR2Vec_FA::inst2Vec(
     // non-numeric/alphabetic constants are also caught as pointer types
     else if (isa<Constant>(I.getOperand(i)) &&
              !isa<PointerType>(I.getOperand(i)->getType())) {
-      vecOp = getValue("constant");
+      getValue("constant", vecOp);
     } else if (isa<BasicBlock>(I.getOperand(i))) {
-      vecOp = getValue("label");
+      getValue("label", vecOp);
     } else {
       if (isa<Instruction>(I.getOperand(i))) {
         auto RD = getReachingDefs(&I, i);
         RDList.insert(RDList.end(), RD.begin(), RD.end());
       } else if (isa<PointerType>(I.getOperand(i)->getType()))
-        vecOp = getValue("pointer");
+        getValue("pointer", vecOp);
       else
-        vecOp = getValue("variable");
+        getValue("variable", vecOp);
     }
 
     std::transform(VecArgs.begin(), VecArgs.end(), vecOp.begin(),
