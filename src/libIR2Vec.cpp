@@ -14,6 +14,9 @@
 
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
+#include <fstream>
+#include <memory>
+#include <optional>
 
 int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
                                           IR2Vec::IR2VecMode mode, char level,

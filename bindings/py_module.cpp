@@ -109,7 +109,7 @@ IR2VecHandler *initEmbedding(std::string filename = "", std::string mode = "",
   return ir2vecObj;
 }
 
-PYBIND11_MODULE(_core, m) {
+PYBIND11_MODULE(pr2vec, m) {
   m.doc() = R"pbdoc(
         IR2Vec Python bindings.
 

@@ -2,10 +2,10 @@
 cmake_minimum_required(VERSION 3.13)
 
 find_package(pybind11 CONFIG REQUIRED)
-pybind11_add_module(_core py_module.cpp)
+pybind11_add_module(pr2vec py_module.cpp)
 
 # Headers from src tree (public ones)
-target_include_directories(_core
+target_include_directories(pr2vec
   PRIVATE
     ${CMAKE_SOURCE_DIR}/src/include
     ${CMAKE_BINARY_DIR}/src/include   # where generated headers usually land
@@ -20,23 +20,23 @@ elseif (TARGET ${IR2VEC_LIB_STATIC})
 endif()
 
 if (_ir2vec_tgt)
-  target_link_libraries(_core PRIVATE ${_ir2vec_tgt})
+  target_link_libraries(pr2vec PRIVATE ${_ir2vec_tgt})
 
-  # Ensure generation runs before compiling _core
-  add_dependencies(_core ${_ir2vec_tgt})
+  # Ensure generation runs before compiling pr2vec
+  add_dependencies(pr2vec ${_ir2vec_tgt})
 
   # Inherit the library target's include dirs & compile defs (covers generated dirs)
-  target_include_directories(_core PRIVATE
+  target_include_directories(pr2vec PRIVATE
     $<TARGET_PROPERTY:${_ir2vec_tgt},INCLUDE_DIRECTORIES>)
-  target_compile_definitions(_core PRIVATE
+  target_compile_definitions(pr2vec PRIVATE
     $<TARGET_PROPERTY:${_ir2vec_tgt},COMPILE_DEFINITIONS>)
 else()
-  message(WARNING "IR2Vec library target not found; _core may miss generated headers.")
+  message(WARNING "IR2Vec library target not found; pr2vec may miss generated headers.")
 endif()
 
 if(UNIX AND NOT APPLE)
-  target_compile_options(_core PRIVATE -fvisibility=hidden)
+  target_compile_options(pr2vec PRIVATE -fvisibility=hidden)
 endif()
 
 # Install into a Python package dir
-install(TARGETS _core LIBRARY DESTINATION ir2vec)
+install(TARGETS pr2vec LIBRARY DESTINATION ir2vec)
