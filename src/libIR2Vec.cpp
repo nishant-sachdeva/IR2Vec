@@ -18,8 +18,8 @@
 int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
                                           IR2Vec::IR2VecMode mode, char level,
                                           std::string funcName, unsigned dim,
-                                          std::ostream *o, int cls, float WO,
-                                          float WA, float WT) {
+                                          std::string outputFile, int cls,
+                                          float WO, float WA, float WT) {
 
   IR2Vec::level = level;
   IR2Vec::cls = cls;
@@ -29,15 +29,29 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
   IR2Vec::funcName = funcName;
   IR2Vec::DIM = dim;
 
+  std::optional<std::ofstream> outStream;
+  std::ostream *os = [&]() -> std::ostream * {
+    if (outputFile.empty()) {
+      outStream.reset();
+      return nullptr;
+    }
+
+    outStream.emplace(outputFile, std::ios_base::app);
+    if (!outStream->is_open())
+      throw std::runtime_error("Failed to open " + outputFile);
+
+    return std::addressof(outStream.value());
+  }();
+
   if (mode == IR2Vec::IR2VecMode::FlowAware && !funcName.empty()) {
     IR2Vec_FA FA(M, vocabulary);
-    FA.generateFlowAwareEncodingsForFunction(o, funcName);
+    FA.generateFlowAwareEncodingsForFunction(os, funcName);
     instVecMap = FA.getInstVecMap();
     funcVecMap = FA.getFuncVecMap();
     bbVecMap = FA.getBBVecMap();
   } else if (mode == IR2Vec::IR2VecMode::FlowAware) {
     IR2Vec_FA FA(M, vocabulary);
-    FA.generateFlowAwareEncodings(o);
+    FA.generateFlowAwareEncodings(os);
     instVecMap = FA.getInstVecMap();
     funcVecMap = FA.getFuncVecMap();
     bbVecMap = FA.getBBVecMap();
@@ -50,7 +64,7 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
     bbVecMap = SYM.getBBVecMap();
   } else if (mode == IR2Vec::IR2VecMode::Symbolic) {
     IR2Vec_Symbolic SYM(M, vocabulary);
-    SYM.generateSymbolicEncodings(o);
+    SYM.generateSymbolicEncodings(os);
     instVecMap = SYM.getInstVecMap();
     funcVecMap = SYM.getFuncVecMap();
     bbVecMap = SYM.getBBVecMap();
