@@ -2,10 +2,10 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-// Pull in your IR2Vec public headers:
 #include "IR2Vec.h"
 #include "utils.h"
 #include "version.h"
+
 #include <fstream>
 #include <ios>
 #include <stdio.h>
@@ -64,13 +64,22 @@ public:
 
   void generateEmbeddings(std::string function_name = "") {
     IR2Vec::iname = fileName;
+    std::cout << "Filename settled " << IR2Vec::iname << std::endl;
+
     IR2Vec::IR2VecMode ir2vecMode =
         (mode == std::string("sym") ? IR2Vec::Symbolic : IR2Vec::FlowAware);
 
+    std::cout << "Filename ir2vec mode settled " << ir2vecMode << std::endl;
+
     std::unique_ptr<llvm::Module> Module = IR2Vec::getLLVMIR();
+
+    std::cout << "Module initialized" << std::endl;
 
     emb = std::make_unique<IR2Vec::Embeddings>(*Module, ir2vecMode, level.at(0),
                                                outputFile, dim, function_name);
+
+    std::cout << "Embedding object created" << std::endl;
+
     if (!emb) {
       throw std::runtime_error("Failed to create embeddings");
     }
@@ -82,6 +91,8 @@ IR2VecHandler *initEmbedding(std::string filename = "", std::string mode = "",
                              std::string output_file = "",
                              std::string function_name = "",
                              unsigned dim = 300) {
+
+  std::cout << "TEST function" << std::endl;
 
   if (fileNotValid(filename))
     throw std::runtime_error("Invalid File Path");
@@ -98,13 +109,22 @@ IR2VecHandler *initEmbedding(std::string filename = "", std::string mode = "",
   if (not(level.at(0) == 'p' or level.at(0) == 'f'))
     throw std::runtime_error("Invalid level specified: Use either p or f");
 
+  std::cout << "Validation Functions done" << std::endl;
+
   IR2VecHandler *ir2vecObj =
       new IR2VecHandler(filename, output_file, mode, level, dim);
+
+  std::cout << "ir2vec object created" << std::endl;
+
   if (!ir2vecObj) {
     throw std::runtime_error("Failed to Create embeddings");
   }
 
+  std::cout << "ir2vec object validated - not nullptr" << std::endl;
+
   ir2vecObj->generateEmbeddings(function_name);
+
+  std::cout << "embedding generation done" << std::endl;
 
   return ir2vecObj;
 }
@@ -140,39 +160,39 @@ PYBIND11_MODULE(pr2vec, m) {
     )pbdoc");
 
   py::class_<IR2VecHandler>(m, "IR2VecHandler")
-      // (constructor binding optional, since users will usually call
-      // initEmbeddings)
       .def(py::init<std::string, std::string, std::string, std::string,
                     unsigned>(),
            py::arg("filename"), py::arg("output_file"), py::arg("mode"),
            py::arg("level"), py::arg("dim"))
 
-      .def("generateEmbeddings", &IR2VecHandler::generateEmbeddings,
-           py::arg("function_name") = std::string{},
-           py::call_guard<py::gil_scoped_release>())
-
       .def("getProgVector", &IR2VecHandler::getProgramVector,
            py::call_guard<py::gil_scoped_release>(),
            R"pbdoc(Return the program vector as a list of floats.)pbdoc")
 
-      // getFuncVectorMap() -> dict[str, list[float]]
       .def(
           "getFuncVectorMap",
           [](IR2VecHandler &self) {
+            std::cout << "Entered Function" << std::endl;
+
             auto &map = self.getFunctionVecMap();
+            std::cout << "Map fetched" << std::endl;
+
             py::dict out;
             for (const auto &kv : map) {
+              std::cout << "Creating elements" << std::endl;
               const llvm::Function *F = kv.first;
               if (!F)
                 continue;
-              out[py::str((F->getName()).data())] =
-                  kv.second; // std::vector<double> -> list[float]
+              std::cout << F->getName().str() << std::endl;
+              out[py::str((F->getName()).str())] = py::cast(kv.second);
+              // std::vector<double> -> list[float]
               // TODO :: check if F->getName() is sufficient
               // or some other demangled name methods are needed
             }
+
+            std::cout << "Dict created" << std::endl;
             return out;
           },
-          py::call_guard<py::gil_scoped_release>(),
           R"pbdoc(Return {function_name: vector} as a dict.)pbdoc")
 
       .def(
@@ -189,6 +209,5 @@ PYBIND11_MODULE(pr2vec, m) {
             }
             return out;
           },
-          py::call_guard<py::gil_scoped_release>(),
           R"pbdoc(Return {instruction_name: vector} as a dict.)pbdoc");
 }

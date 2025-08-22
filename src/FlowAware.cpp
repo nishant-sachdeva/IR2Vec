@@ -134,18 +134,25 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
                                            std::ostream *cyclicCount) {
 
   int noOfFunc = 0;
+  std::cout << "FuncVecMap Function Entered" << std::endl;
 
   for (auto &f : M) {
+    std::cout << "Function F - " << f.getName().str() << std::endl;
     if (!f.isDeclaration()) {
       SmallVector<Function *, 15> funcStack;
       auto tmp = func2Vec(f, funcStack);
+      std::cout << "func2Vec call returned " << tmp.size() << std::endl;
       funcVecMap[&f] = tmp;
     }
   }
 
+  std::cout << "FuncVecMap init done" << std::endl;
+
   for (auto funcit : funcVecMap) {
     updateFuncVecMapWithCallee(funcit.first);
   }
+
+  std::cout << "Update Func Vec Map with Callee Done" << std::endl;
 
   for (auto &f : M) {
     if (!f.isDeclaration()) {
@@ -166,6 +173,8 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
     }
   }
 
+  std::cout << "Update Func Vec Map Transform Done" << std::endl;
+
   if (level == 'p') {
     if (cls != -1)
       res += std::to_string(cls) + "\t";
@@ -178,8 +187,12 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
     res += "\n";
   }
 
+  std::cout << "Final String Created" << std::endl;
+
   if (o)
     *o << res;
+
+  std::cout << "Written to File" << std::endl;
 
   if (missCount) {
     std::string missEntry =

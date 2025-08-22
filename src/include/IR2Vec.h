@@ -11,6 +11,7 @@
 
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/Module.h"
+#include <iostream>
 #include <string>
 
 #include "Vocabulary.h"
@@ -46,9 +47,12 @@ public:
              std::string outputFile = "", unsigned dim = 300,
              std::string funcName = "", float WO = 1, float WA = 0.2,
              float WT = 0.5) {
+    std::cout << "Embeddings constructor called " << std::endl;
     vocabulary = VocabularyFactory::createVocabulary(dim)->getVocabulary();
-    generateEncodings(M, mode, level, funcName, dim, outputFile, -1, WO, WA,
-                      WT);
+    std::cout << "Vocabulary constructor called " << std::endl;
+    int ret_val = generateEncodings(M, mode, level, funcName, dim, outputFile,
+                                    -1, WO, WA, WT);
+    std::cout << "Encoding generation done " << ret_val << std::endl;
   }
 
   // Returns a map containing instructions and the corresponding vector

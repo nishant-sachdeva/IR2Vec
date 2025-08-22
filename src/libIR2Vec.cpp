@@ -32,6 +32,8 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
   IR2Vec::funcName = funcName;
   IR2Vec::DIM = dim;
 
+  std::cout << "Generate Encoding Function entered" << std::endl;
+
   std::optional<std::ofstream> outStream;
   std::ostream *os = [&]() -> std::ostream * {
     if (outputFile.empty()) {
@@ -46,6 +48,8 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
     return std::addressof(outStream.value());
   }();
 
+  std::cout << "Outfile stream created" << std::endl;
+
   if (mode == IR2Vec::IR2VecMode::FlowAware && !funcName.empty()) {
     IR2Vec_FA FA(M, vocabulary);
     FA.generateFlowAwareEncodingsForFunction(os, funcName);
@@ -53,12 +57,19 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
     funcVecMap = FA.getFuncVecMap();
     bbVecMap = FA.getBBVecMap();
   } else if (mode == IR2Vec::IR2VecMode::FlowAware) {
+    std::cout << "Creating FA Embedding" << std::endl;
     IR2Vec_FA FA(M, vocabulary);
+    std::cout << "Init - Vocab added" << std::endl;
+
     FA.generateFlowAwareEncodings(os);
+    std::cout << "Embedding Generation Done" << std::endl;
+
     instVecMap = FA.getInstVecMap();
     funcVecMap = FA.getFuncVecMap();
     bbVecMap = FA.getBBVecMap();
     pgmVector = FA.getProgramVector();
+    std::cout << "Vector maps assigned. Function Done" << std::endl;
+
   } else if (mode == IR2Vec::IR2VecMode::Symbolic && !funcName.empty()) {
     IR2Vec_Symbolic SYM(M, vocabulary);
     SYM.generateSymbolicEncodingsForFunction(0, funcName);
@@ -66,12 +77,19 @@ int IR2Vec::Embeddings::generateEncodings(llvm::Module &M,
     funcVecMap = SYM.getFuncVecMap();
     bbVecMap = SYM.getBBVecMap();
   } else if (mode == IR2Vec::IR2VecMode::Symbolic) {
+    std::cout << "Creating Sym Embedding" << std::endl;
     IR2Vec_Symbolic SYM(M, vocabulary);
+
+    std::cout << "Init - Vocab added" << std::endl;
     SYM.generateSymbolicEncodings(os);
+
+    std::cout << "Embedding Generation Done" << std::endl;
+
     instVecMap = SYM.getInstVecMap();
     funcVecMap = SYM.getFuncVecMap();
     bbVecMap = SYM.getBBVecMap();
     pgmVector = SYM.getProgramVector();
+    std::cout << "Vector maps assigned. Function Done" << std::endl;
   }
 
   return 0;
