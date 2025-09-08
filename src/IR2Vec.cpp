@@ -596,6 +596,8 @@ void calcSSAReachingDefs(llvm::Instruction *inst, llvm::MemorySSA &MSSA,
   }
 }
 
+static inline const Instruction* baseInstOf(const Instruction *I);
+
 SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
 collectSSAWriteDefsMap_trimmed(FunctionAnalysisManager &FAM, Module &M) {
   SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16> writeDefsMap;
@@ -632,13 +634,22 @@ static inline void recordDefFor(
         &writeDefsMap,
     const Instruction *UseOrDefInst,
     const Instruction *DefInst) {
-  if (const Instruction *Base = baseInstOf(UseOrDefInst)) {
+      const Instruction* Base = baseInstOf(UseOrDefInst);
+      while(Base && Base->mayReadOrWriteMemory()) {
+        Base = baseInstOf(Base);  
+      }
+  // if (const Instruction *Base = baseInstOf(UseOrDefInst)) {
     // TODO : Check if DefInst already exists in the map
-    std::cout << "\t\tRecording write Defs map \n";
-    if(Base) {std::cout << "\t\t";printObject(Base);} else std::cout << "Base Inst is null" << std::endl;
-    if(DefInst) {std::cout << "\t\t";printObject(DefInst);} else std::cout << "DefInst is Null " << std::endl;
-    writeDefsMap[Base].push_back(DefInst);
-  }
+    // std::cout << "\t\tRecording write Defs map \n";
+    // if(Base) {
+    //   std::cout << "\t\t";
+    //   printObject(Base);
+    //   std::cout << "I may read or write memory?  " << Base->mayReadOrWriteMemory() << std::endl;
+    // } else 
+    //   std::cout << "Base Inst is null" << std::endl;
+    // if(DefInst) {std::cout << "\t\t";printObject(DefInst);} else std::cout << "DefInst is Null " << std::endl;
+    if(Base and DefInst) writeDefsMap[Base].push_back(DefInst);
+  // }
 }
 
 llvm::SmallMapVector<const llvm::Instruction *,
@@ -646,7 +657,7 @@ llvm::SmallMapVector<const llvm::Instruction *,
   llvm::SmallMapVector<const llvm::Instruction *,
                        llvm::SmallVector<const llvm::Instruction *, 10>, 16> writeDefsMap;
   
-  std::cout << "Inside SSA writeDefsMap " << std::endl;
+  // std::cout << "Inside SSA writeDefsMap " << std::endl;
 
   for (Function &F: M) {
     if (!F.isDeclaration()) {
@@ -655,12 +666,12 @@ llvm::SmallMapVector<const llvm::Instruction *,
         for (auto &I : BB) {
           if (!I.mayReadOrWriteMemory()) continue;
 
-          std::cout << "Checking instruction ";
-          IR2Vec::printObject(&I);
+          // std::cout << "Checking instruction ";
+          // IR2Vec::printObject(&I);
 
           MemoryAccess *MA = MSSA.getMemoryAccess(&I);
           if (!MA) {
-            std::cout << "Memory access not received " << std::endl;
+            // std::cout << "Memory access not received " << std::endl;
             continue;
           }
           // if (auto *MU = dyn_cast<MemoryUse>(MA)) {
@@ -675,10 +686,10 @@ llvm::SmallMapVector<const llvm::Instruction *,
           //   }
           // } else 
           if (auto *MD = dyn_cast<MemoryDef>(MA)) {
-            std::cout << "Entered follow up branch - memDef " << std::endl;
+            // std::cout << "Entered follow up branch - memDef " << std::endl;
             recordDefFor(writeDefsMap, &I, &I);
           } else if (auto *MPhi = dyn_cast<MemoryPhi>(MA)) {
-            std::cout << "Phi node - skipping for now" << std::endl;
+            // std::cout << "Phi node - skipping for now" << std::endl;
             continue;
           }
         }
@@ -788,14 +799,14 @@ void runMDA() {
     auto oldMap = FA.getWriteDefsMap();
 
     std::cout << "Old Map is ready" << std::endl;
-    IR2Vec::print_write_defs_map(oldMap);
+    // IR2Vec::print_write_defs_map(oldMap);
 
     auto newMap = checkMemssaFunctions(*M);
     std::cout << "New Map Ready " << std::endl;
-    IR2Vec::print_write_defs_map(newMap);
+    // IR2Vec::print_write_defs_map(newMap);
 
-    // bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
-    // std::cout << "Both maps are Same ? - " << same << std::endl;
+    bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
+    std::cout << "Both maps are Same ? - " << same << std::endl;
   }
 
   return;
