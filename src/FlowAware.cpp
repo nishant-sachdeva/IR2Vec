@@ -32,6 +32,7 @@
 #include <functional>
 #include <regex>
 #include <string>
+#include <iostream>
 
 using namespace llvm;
 using namespace IR2Vec;

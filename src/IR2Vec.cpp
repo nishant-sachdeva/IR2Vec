@@ -15,9 +15,9 @@
 #include "utils.h"
 #include "llvm/Support/CommandLine.h"
 #include <stdio.h>
-#include <time.h>
 
 #include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/Support/CommandLine.h"
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
 #include <llvm/IR/BasicBlock.h>
@@ -259,17 +259,9 @@ void populateRDWithMemDep(
     llvm::SmallVector<const llvm::Instruction *, 10> *RD,
     std::unordered_map<const llvm::Instruction *, bool> &Visited);
 
-template <typename T> void printObject(const T *obj) {
-  std::string output;
-  llvm::raw_string_ostream rso(output);
-  obj->print(rso); // Call the `print` method of the object
-  rso.flush();
-  std::cout << output << std::endl;
-}
-
 void printOperand(llvm::Value *operand) {
   std::cout << "Operand: ";
-  printObject(operand);
+  IR2Vec::printObject(operand);
 
   if (auto *inst = dyn_cast<Instruction>(operand)) {
     std::cout << "Instruction: " << IR2Vec::getInstStr(inst);
@@ -604,7 +596,101 @@ void calcSSAReachingDefs(llvm::Instruction *inst, llvm::MemorySSA &MSSA,
   }
 }
 
-void checkMemssaFunctions(llvm::Module &M) {
+SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
+collectSSAWriteDefsMap_trimmed(FunctionAnalysisManager &FAM, Module &M) {
+  SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16> writeDefsMap;
+
+  for (Function &F : M) {
+    if (F.isDeclaration()) continue;
+
+    MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+
+    for (auto &BB : F) {
+      for (auto &I : BB) {
+        if (!I.mayWriteToMemory()) continue;
+        if (auto *MD = dyn_cast_or_null<MemoryDef>(MSSA.getMemoryAccess(&I))) {
+          if (const Instruction *Base = baseInstOf(&I))
+            writeDefsMap[Base].push_back(&I);
+        }
+      }
+    }
+  }
+  return writeDefsMap;
+}
+
+
+static inline const Instruction* baseInstOf(const Instruction *I) {
+  if (const Value *Ptr = getPointerOperand(I)) {
+    const Value *Base = llvm::getUnderlyingObject(Ptr);
+    return dyn_cast<Instruction>(Base);
+  }
+  return nullptr;
+}
+
+static inline void recordDefFor(
+    SmallMapVector<const Instruction*, SmallVector<const Instruction*,10>,16>
+        &writeDefsMap,
+    const Instruction *UseOrDefInst,
+    const Instruction *DefInst) {
+  if (const Instruction *Base = baseInstOf(UseOrDefInst)) {
+    // TODO : Check if DefInst already exists in the map
+    std::cout << "\t\tRecording write Defs map \n";
+    if(Base) {std::cout << "\t\t";printObject(Base);} else std::cout << "Base Inst is null" << std::endl;
+    if(DefInst) {std::cout << "\t\t";printObject(DefInst);} else std::cout << "DefInst is Null " << std::endl;
+    writeDefsMap[Base].push_back(DefInst);
+  }
+}
+
+llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M) {
+  llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> writeDefsMap;
+  
+  std::cout << "Inside SSA writeDefsMap " << std::endl;
+
+  for (Function &F: M) {
+    if (!F.isDeclaration()) {
+      MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+      for (auto &BB : F) {
+        for (auto &I : BB) {
+          if (!I.mayReadOrWriteMemory()) continue;
+
+          std::cout << "Checking instruction ";
+          IR2Vec::printObject(&I);
+
+          MemoryAccess *MA = MSSA.getMemoryAccess(&I);
+          if (!MA) {
+            std::cout << "Memory access not received " << std::endl;
+            continue;
+          }
+          // if (auto *MU = dyn_cast<MemoryUse>(MA)) {
+          //     std::cout << "\tEntered memory Use " << std::endl;
+          //   MemorySSAWalker *Walker = MSSA.getWalker();
+          //   MemoryAccess *Def = Walker->getClobberingMemoryAccess(MU);
+          //   if (auto *MDef = dyn_cast<MemoryDef>(Def)) {
+          //     std::cout << "\tFound memory Def for use " << std::endl;
+          //     Instruction *DefInst = MDef->getMemoryInst();
+
+          //     recordDefFor(writeDefsMap, &I, DefInst);
+          //   }
+          // } else 
+          if (auto *MD = dyn_cast<MemoryDef>(MA)) {
+            std::cout << "Entered follow up branch - memDef " << std::endl;
+            recordDefFor(writeDefsMap, &I, &I);
+          } else if (auto *MPhi = dyn_cast<MemoryPhi>(MA)) {
+            std::cout << "Phi node - skipping for now" << std::endl;
+            continue;
+          }
+        }
+      }
+    }
+  }
+  return writeDefsMap;
+}
+
+SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
+ checkMemssaFunctions(llvm::Module &M) {
+  // std::cout << "Calling MemorySSA Functions" << std::endl;
   PassBuilder PB;
   FunctionAnalysisManager FAM;
 
@@ -626,6 +712,21 @@ void checkMemssaFunctions(llvm::Module &M) {
   FAM.registerPass([] { return MemorySSAAnalysis(); });
   FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
 
+  clock_t start = clock();
+
+  auto writeDefsMap = collectSSAWriteDefsMap(FAM, M);
+  // auto writeDefsMap = collectSSAWriteDefsMap_trimmed(FAM, M);
+
+  clock_t end = clock();
+  double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  printf("Time taken by SSA collectWriteDefs map "
+          "is: %.6f "
+          "seconds.\n",
+          elapsed);
+
+
+  return writeDefsMap;
+
   // Run the pass on each function in the module
   for (Function &F : M) {
     if (!F.isDeclaration()) {
@@ -643,46 +744,29 @@ void checkMemssaFunctions(llvm::Module &M) {
   }
 }
 
-// void checkDepAnalysisFunctions(llvm::Module &M) {
-//   PassBuilder PB;
-//   FunctionAnalysisManager FAM;
+static inline std::string toIR(const llvm::Value *V, const llvm::Module *M) {
+  std::string s; llvm::raw_string_ostream os(s);
+  V->printAsOperand(os, /*PrintType=*/false, M); // stable naming within M
+  return os.str();
+}
 
-//   // We need to initialize the other pass managers even if we don't directly
-//   use
-//   // them
-//   LoopAnalysisManager LAM;
-//   CGSCCAnalysisManager CGAM;
-//   ModuleAnalysisManager MAM;
+using MapTy = llvm::SmallMapVector<
+    const llvm::Instruction*,
+    llvm::SmallVector<const llvm::Instruction*, 10>, 16>;
 
-//   // Register all the passes with the PassBuilder
-//   PB.registerModuleAnalyses(MAM);
-//   PB.registerCGSCCAnalyses(CGAM);
-//   PB.registerLoopAnalyses(LAM);
-//   PB.registerFunctionAnalyses(FAM);
-
-//   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
-
-//   // Register required alias analyses and memory dependence analysis
-//   FAM.registerPass([] { return DependenceAnalysis(); });
-//   FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
-
-//   // Run the pass on each function in the module
-//   for (Function &F : M) {
-//     if (!F.isDeclaration()) {
-//       DependenceInfo &result = FAM.getResult<DependenceAnalysis>(F);
-
-//       // for (auto &BB : F) {
-//       //   for (Instruction &inst : BB) {
-//       //     llvm::SmallVector<const llvm::Instruction *, 10> RD;
-//       //     calcSSAReachingDefs(&inst, MSSA, &RD);
-//       //     if (RD.size() > 0) {
-//       //       printReachingDefs(&inst, RD);
-//       //     }
-//       //   }
-//       // }
-//     }
-//   }
-// }
+bool writeDefsMapEqualByText(const MapTy &A, const MapTy &B, const llvm::Module *M) {
+  auto normalize = [&](const MapTy &Mp) {
+    std::map<std::string, std::set<std::string>> out;
+    for (const auto &kv : Mp) {
+      std::string k = toIR(kv.first, M);
+      std::set<std::string> vals;
+      for (const llvm::Instruction *v : kv.second) vals.insert(toIR(v, M));
+      out.emplace(std::move(k), std::move(vals));
+    }
+    return out;
+  };
+  return normalize(A) == normalize(B);
+}
 
 void runMDA() {
   auto M = getLLVMIR();
@@ -695,8 +779,24 @@ void runMDA() {
 
   if (memdep)
     checkMemdepFunctions(*M);
-  else if (memssa)
-    checkMemssaFunctions(*M);
+  else if (memssa){
+    // get old Map 
+    auto M = getLLVMIR();
+    auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+    IR2Vec_FA FA(*M, vocabulary);
+    auto oldMap = FA.getWriteDefsMap();
+
+    std::cout << "Old Map is ready" << std::endl;
+    IR2Vec::print_write_defs_map(oldMap);
+
+    auto newMap = checkMemssaFunctions(*M);
+    std::cout << "New Map Ready " << std::endl;
+    IR2Vec::print_write_defs_map(newMap);
+
+    // bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
+    // std::cout << "Both maps are Same ? - " << same << std::endl;
+  }
 
   return;
 }

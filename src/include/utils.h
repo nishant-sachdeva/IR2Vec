@@ -23,8 +23,11 @@
 #include <llvm/Support/Path.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Option/Option.h>
+#include "llvm/ADT/MapVector.h"
+
 
 #include <cxxabi.h>
+#include <time.h>
 #include <fstream>
 #include <iostream>
 #include <map>
@@ -71,6 +74,20 @@ std::string getInstStr(const llvm::Instruction* I);
 bool isLoadorStore(const llvm::Instruction* I);
 bool isLoad(const llvm::Instruction* I);
 bool isStore(const llvm::Instruction* I);
+
+template <typename T> void printObject(const T *obj) {
+  std::string output;
+  llvm::raw_string_ostream rso(output);
+  obj->print(rso); // Call the `print` method of the object
+  rso.flush();
+  std::cout << output << std::endl;
+}
+
+void print_write_defs_map(
+  llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+      writeDefsMapObj
+);
 } // namespace IR2Vec
 
 #endif

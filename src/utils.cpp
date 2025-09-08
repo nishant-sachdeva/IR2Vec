@@ -47,6 +47,29 @@ std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {
   return M;
 }
 
+void IR2Vec::print_write_defs_map(
+  llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+      writeDefsMapObj
+) {
+  std::cout << writeDefsMapObj.size() << std::endl;
+
+  std::cout << "Printing Write Defs Map " << std::endl;
+  for(auto item : writeDefsMapObj) {
+    auto ins = item.first;
+    auto defs = item.second;
+
+    // print out instruction
+    IR2Vec::printObject(ins);
+    if(defs.size() > 0)
+      for(auto def_ins : defs) {
+        std::cout << "\t" ; IR2Vec::printObject(def_ins);
+      }
+  }
+  std::cout << "Write Defs Map concluded" << std::endl;
+}
+
+
 std::string IR2Vec::getInstStr(const llvm::Instruction* inst) {
   std::string useStr;
   llvm::raw_string_ostream useStream(useStr);
