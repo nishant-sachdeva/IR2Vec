@@ -390,12 +390,6 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
-  for (auto &Inst: instReachingDefsMap) {
-    auto RD = Inst.second;
-    auto inst = Inst.first;
-    printReachingDefs(inst, RD);
-  }
-
   // one time Reversing instReachingDefsMap to be used to calculate SCCs
   for (auto &I : instReachingDefsMap) {
     auto RD = I.second;

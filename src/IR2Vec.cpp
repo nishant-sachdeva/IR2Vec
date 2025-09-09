@@ -23,6 +23,8 @@
 #include <llvm/IR/BasicBlock.h>
 #include <llvm/IR/Function.h>
 #include <llvm/IR/Instruction.h>
+#include "llvm/IR/Instructions.h"
+
 #include <llvm/IR/Module.h>
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Support/raw_ostream.h>
@@ -170,6 +172,19 @@ void generateFAEncodings() {
     FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
   }
   o.close();
+
+  // print Reaching Defs
+  auto reachingDefs = FA.getInstReachingDefsMap();
+  for (auto &Inst: reachingDefs) {
+    auto RD = Inst.second;
+    auto inst = Inst.first;
+    IR2Vec::printReachingDefs(inst, RD);
+  }
+
+  // std::cout << "Old Map is ready" << std::endl;
+  // auto oldMap = FA.getWriteDefsMap()
+  // IR2Vec::print_write_defs_map(oldMap);
+  // std::cout << "\n\n";
 }
 
 void generateSYMEncodings() {
@@ -596,37 +611,31 @@ void calcSSAReachingDefs(llvm::Instruction *inst, llvm::MemorySSA &MSSA,
   }
 }
 
-static inline const Instruction* baseInstOf(const Instruction *I);
-
-SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
-collectSSAWriteDefsMap_trimmed(FunctionAnalysisManager &FAM, Module &M) {
-  SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16> writeDefsMap;
-
-  for (Function &F : M) {
-    if (F.isDeclaration()) continue;
-
-    MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-
-    for (auto &BB : F) {
-      for (auto &I : BB) {
-        if (!I.mayWriteToMemory()) continue;
-        if (auto *MD = dyn_cast_or_null<MemoryDef>(MSSA.getMemoryAccess(&I))) {
-          if (const Instruction *Base = baseInstOf(&I))
-            writeDefsMap[Base].push_back(&I);
-        }
-      }
-    }
-  }
-  return writeDefsMap;
-}
-
 
 static inline const Instruction* baseInstOf(const Instruction *I) {
-  if (const Value *Ptr = getPointerOperand(I)) {
-    const Value *Base = llvm::getUnderlyingObject(Ptr);
-    return dyn_cast<Instruction>(Base);
+  const Value *Ptr = getPointerOperand(I);
+  if (!Ptr) 
+    return nullptr;
+
+  // Get the deepest object in the pointer chain
+  const Value *UnderlyingObj = llvm::getUnderlyingObject(Ptr);
+  
+  // If it's an instruction, that's our base
+  if (const Instruction *BaseInst = dyn_cast<Instruction>(UnderlyingObj)) {
+    return BaseInst;
   }
-  return nullptr;
+  
+  // Corner case: if getUnderlyingObject stopped at a non-instruction,
+  // but the original pointer was a GEP, check the GEP's base pointer
+  if (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr)) {
+    const Value *GEPBase = GEP->getPointerOperand();
+    if (const Instruction *GEPBaseInst = dyn_cast<Instruction>(GEPBase)) {
+      return GEPBaseInst;
+    }
+  }
+  
+  // Otherwise, if the original pointer was an instruction, use that
+  return dyn_cast<Instruction>(Ptr);
 }
 
 static inline void recordDefFor(
@@ -635,21 +644,47 @@ static inline void recordDefFor(
     const Instruction *UseOrDefInst,
     const Instruction *DefInst) {
       const Instruction* Base = baseInstOf(UseOrDefInst);
+
+      // Keep going deeper only if we can actually go deeper
       while(Base && Base->mayReadOrWriteMemory()) {
-        Base = baseInstOf(Base);  
-      }
-  // if (const Instruction *Base = baseInstOf(UseOrDefInst)) {
-    // TODO : Check if DefInst already exists in the map
-    // std::cout << "\t\tRecording write Defs map \n";
-    // if(Base) {
-    //   std::cout << "\t\t";
-    //   printObject(Base);
-    //   std::cout << "I may read or write memory?  " << Base->mayReadOrWriteMemory() << std::endl;
-    // } else 
-    //   std::cout << "Base Inst is null" << std::endl;
-    // if(DefInst) {std::cout << "\t\t";printObject(DefInst);} else std::cout << "DefInst is Null " << std::endl;
-    if(Base and DefInst) writeDefsMap[Base].push_back(DefInst);
-  // }
+        const Instruction* NextBase = baseInstOf(Base);
+        if (!NextBase) {
+            // Can't go deeper, stop here
+            break;
+        }
+        Base = NextBase;
+      }  
+
+      if(Base && DefInst) writeDefsMap[Base].push_back(DefInst);
+}
+
+inline bool isExcludedMemoryOp(const llvm::Instruction *I) {
+  // Exclude volatile loads and atomic loads
+  if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(I))
+    return LI->isVolatile() || LI->isAtomic();
+
+  // Exclude volatile memintrinsics (memcpy/memmove/memset)
+  if (auto *MI = llvm::dyn_cast<llvm::MemIntrinsic>(I))
+    return MI->isVolatile();
+
+  // Stores / AtomicRMW / CmpXchg are WRITE defs → keep them
+  return false;
+}
+
+inline bool isFakeDef(const llvm::Instruction *I) {
+  if (isa<llvm::StoreInst, llvm::AtomicRMWInst, llvm::AtomicCmpXchgInst>(I))
+    return false;
+
+  if (auto *MI = dyn_cast<llvm::MemIntrinsic>(I)) {
+    // memcpy, memmove, memset all write
+    return false;
+  }
+
+  // Loads never count as writes, even if atomic/volatile
+  if (isa<llvm::LoadInst>(I))
+    return true;
+
+  return true;
 }
 
 llvm::SmallMapVector<const llvm::Instruction *,
@@ -664,29 +699,39 @@ llvm::SmallMapVector<const llvm::Instruction *,
       MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
       for (auto &BB : F) {
         for (auto &I : BB) {
-          if (!I.mayReadOrWriteMemory()) continue;
-
-          // std::cout << "Checking instruction ";
+          // std::cout << "\n\nChecking instruction ";
           // IR2Vec::printObject(&I);
+          // std::cout << "isvolatile ? " << isVolatileOrAtomic(&I) << std::endl;
+          if (!I.mayReadOrWriteMemory()) continue;
+            // std::cout << "Does not read of write memory. Leaving out\n";
+            // printObject(&I);
 
+            // const Instruction* Base = baseInstOf(&I);
+            // std::cout << " For reference, Base here is ";
+            // if(Base) printObject(Base); else std::cout << "Null " << std::endl;
+
+          // if (isExcludedMemoryOp(&I))
+          //   continue;
           MemoryAccess *MA = MSSA.getMemoryAccess(&I);
           if (!MA) {
             // std::cout << "Memory access not received " << std::endl;
             continue;
           }
-          // if (auto *MU = dyn_cast<MemoryUse>(MA)) {
-          //     std::cout << "\tEntered memory Use " << std::endl;
-          //   MemorySSAWalker *Walker = MSSA.getWalker();
-          //   MemoryAccess *Def = Walker->getClobberingMemoryAccess(MU);
-          //   if (auto *MDef = dyn_cast<MemoryDef>(Def)) {
-          //     std::cout << "\tFound memory Def for use " << std::endl;
-          //     Instruction *DefInst = MDef->getMemoryInst();
+          if (auto *MU = dyn_cast<MemoryUse>(MA)) {
+            continue;
+              // std::cout << "\tEntered memory Use " << std::endl;
+            // MemorySSAWalker *Walker = MSSA.getWalker();
+            // MemoryAccess *Def = Walker->getClobberingMemoryAccess(MU);
+            // if (auto *MDef = dyn_cast<MemoryDef>(Def)) {
+            //   std::cout << "\tFound memory Def for use " << std::endl;
+            //   Instruction *DefInst = MDef->getMemoryInst();
 
-          //     recordDefFor(writeDefsMap, &I, DefInst);
-          //   }
-          // } else 
-          if (auto *MD = dyn_cast<MemoryDef>(MA)) {
+            //   recordDefFor(writeDefsMap, &I, DefInst);
+            // }
+          } else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
             // std::cout << "Entered follow up branch - memDef " << std::endl;
+            if (isFakeDef(&I))
+              continue; // skip fake defs (volatile/atomic loads)
             recordDefFor(writeDefsMap, &I, &I);
           } else if (auto *MPhi = dyn_cast<MemoryPhi>(MA)) {
             // std::cout << "Phi node - skipping for now" << std::endl;
@@ -726,7 +771,6 @@ SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
   clock_t start = clock();
 
   auto writeDefsMap = collectSSAWriteDefsMap(FAM, M);
-  // auto writeDefsMap = collectSSAWriteDefsMap_trimmed(FAM, M);
 
   clock_t end = clock();
   double elapsed = double(end - start) / CLOCKS_PER_SEC;
@@ -779,6 +823,66 @@ bool writeDefsMapEqualByText(const MapTy &A, const MapTy &B, const llvm::Module 
   return normalize(A) == normalize(B);
 }
 
+// Minimal map comparison - put this directly in your function where you need it
+void compareMapsSimple(const MapTy &oldMap, const MapTy &newMap) {
+    llvm::outs() << "Old map size: " << oldMap.size() << ", New map size: " << newMap.size() << "\n";
+    
+    if (oldMap.size() == newMap.size()) {
+        llvm::outs() << "Same number of keys\n";
+    } else {
+        llvm::outs() << "Different number of keys\n";
+    }
+    
+    // Count total definitions
+    size_t oldTotal = 0, newTotal = 0;
+    for (const auto &p : oldMap) oldTotal += p.second.size();
+    for (const auto &p : newMap) newTotal += p.second.size();
+    
+    llvm::outs() << "Old total defs: " << oldTotal << ", New total defs: " << newTotal << "\n";
+    
+    // Find missing keys (in old but not new)
+    int missingCount = 0;
+    for (const auto &oldPair : oldMap) {
+        bool found = false;
+        for (const auto &newPair : newMap) {
+            if (oldPair.first == newPair.first) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            if (missingCount < 5) { // Show first 5 missing keys
+                llvm::outs() << "MISSING: ";
+                oldPair.first->print(llvm::outs());
+                llvm::outs() << "\n";
+            }
+            missingCount++;
+        }
+    }
+    llvm::outs() << "Total missing keys: " << missingCount << "\n";
+    
+    // Find extra keys (in new but not old)
+    int extraCount = 0;
+    for (const auto &newPair : newMap) {
+        bool found = false;
+        for (const auto &oldPair : oldMap) {
+            if (newPair.first == oldPair.first) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            // if (extraCount < 5) { // Show first 5 extra keys
+            llvm::outs() << "EXTRA: ";
+            newPair.first->print(llvm::outs());
+            llvm::outs() << "\n";
+            // }
+            extraCount++;
+        }
+    }
+    llvm::outs() << "Total extra keys: " << extraCount << "\n";
+}
+
 void runMDA() {
   auto M = getLLVMIR();
 
@@ -791,22 +895,16 @@ void runMDA() {
   if (memdep)
     checkMemdepFunctions(*M);
   else if (memssa){
-    // get old Map 
-    auto M = getLLVMIR();
-    auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+    // get old Map / Old Defs
+    generateFAEncodings()
 
-    IR2Vec_FA FA(*M, vocabulary);
-    auto oldMap = FA.getWriteDefsMap();
-
-    std::cout << "Old Map is ready" << std::endl;
-    // IR2Vec::print_write_defs_map(oldMap);
-
-    auto newMap = checkMemssaFunctions(*M);
-    std::cout << "New Map Ready " << std::endl;
+    // auto newMap = checkMemssaFunctions(*M);
+    // std::cout << "New Map Ready " << std::endl;
     // IR2Vec::print_write_defs_map(newMap);
 
-    bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
-    std::cout << "Both maps are Same ? - " << same << std::endl;
+    // compareMapsSimple(oldMap, newMap);
+    // bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
+    // std::cout << "Both maps are Same ? - " << same << std::endl;
   }
 
   return;
@@ -826,21 +924,7 @@ int main(int argc, char **argv) {
     runMDA();
     return 0;
   }
-  // runMDA();
-  // return 0;
 
-  // generateLLVMIR(iname.c_str());
-
-  // std::cout << "Code reached beyond llvm ir output" << std::endl;
-
-  // auto module = Act->getModule();
-
-  // if (module == NULL) {
-  //   std::cout << "Error in getModule" << std::endl;
-  //   return 0;
-  // }
-
-  // // newly added
   if (sym && !(funcName.empty())) {
     generateSymEncodingsFunction(funcName);
   } else if (fa && !(funcName.empty())) {

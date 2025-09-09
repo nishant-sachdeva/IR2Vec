@@ -213,6 +213,12 @@ public:
     return writeDefsMap;
   }
 
+  llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+  getInstReachingDefsMap() {
+    return instReachingDefsMap;
+  }
+
   IR2Vec::Vector getProgramVector() { return pgmVector; }
 };
 
