@@ -17,7 +17,11 @@
 #include <stdio.h>
 
 #include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Analysis/AliasAnalysis.h" 
 #include "llvm/Analysis/ValueTracking.h"
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/Analysis/DependenceAnalysis.h>
+
 #include "llvm/Support/CommandLine.h"
 #include <llvm/Analysis/MemoryDependenceAnalysis.h>
 #include <llvm/IR/BasicBlock.h>
@@ -33,9 +37,6 @@
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Transforms/Scalar.h"
 
-#include <llvm/Analysis/AliasAnalysis.h>
-#include <llvm/Analysis/BasicAliasAnalysis.h> // For BasicAA
-#include <llvm/Analysis/DependenceAnalysis.h>
 
 using namespace llvm;
 using namespace IR2Vec;
@@ -150,7 +151,9 @@ void generateFAEncodingsFunction(std::string funcName) {
   o.close();
 }
 
-void generateFAEncodings() {
+llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+                        generateFAEncodings() {
   auto M = getLLVMIR();
   auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
@@ -174,12 +177,15 @@ void generateFAEncodings() {
   o.close();
 
   // print Reaching Defs
+  std::cout << "\n\nPrinting Native Code Reaching Defs\n";
   auto reachingDefs = FA.getInstReachingDefsMap();
-  for (auto &Inst: reachingDefs) {
-    auto RD = Inst.second;
-    auto inst = Inst.first;
-    IR2Vec::printReachingDefs(inst, RD);
-  }
+  // for (auto &Inst: reachingDefs) {
+  //   auto RD = Inst.second;
+  //   auto inst = Inst.first;
+  //   IR2Vec::printReachingDefs(inst, RD);
+  // }
+
+  return reachingDefs;
 
   // std::cout << "Old Map is ready" << std::endl;
   // auto oldMap = FA.getWriteDefsMap()
@@ -658,19 +664,6 @@ static inline void recordDefFor(
       if(Base && DefInst) writeDefsMap[Base].push_back(DefInst);
 }
 
-inline bool isExcludedMemoryOp(const llvm::Instruction *I) {
-  // Exclude volatile loads and atomic loads
-  if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(I))
-    return LI->isVolatile() || LI->isAtomic();
-
-  // Exclude volatile memintrinsics (memcpy/memmove/memset)
-  if (auto *MI = llvm::dyn_cast<llvm::MemIntrinsic>(I))
-    return MI->isVolatile();
-
-  // Stores / AtomicRMW / CmpXchg are WRITE defs → keep them
-  return false;
-}
-
 inline bool isFakeDef(const llvm::Instruction *I) {
   if (isa<llvm::StoreInst, llvm::AtomicRMWInst, llvm::AtomicCmpXchgInst>(I))
     return false;
@@ -688,10 +681,11 @@ inline bool isFakeDef(const llvm::Instruction *I) {
 }
 
 llvm::SmallMapVector<const llvm::Instruction *,
-                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M) {
-  llvm::SmallMapVector<const llvm::Instruction *,
                        llvm::SmallVector<const llvm::Instruction *, 10>, 16> writeDefsMap;
   
+// llvm::SmallMapVector<const llvm::Instruction *,
+//                        llvm::SmallVector<const llvm::Instruction *, 10>, 16> 
+void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M) {
   // std::cout << "Inside SSA writeDefsMap " << std::endl;
 
   for (Function &F: M) {
@@ -741,11 +735,141 @@ llvm::SmallMapVector<const llvm::Instruction *,
       }
     }
   }
-  return writeDefsMap;
+  // return writeDefsMap;
 }
 
+bool hasMemoryDependencies(const Instruction *I) {
+  std::cout << "\t\tChecking memory dependencies ";
+  printObject(I);
+  // Quick check - if it's in your writeDefsMap, it has memory dependencies
+  // This should be O(1) hash lookup using your existing optimized writeDefsMap
+  return writeDefsMap.count(I) > 0;
+}
+
+bool couldAffectSameMemoryLocation(const Instruction *def, const Instruction *use) {
+  // This replaces your expensive dominance and reachability analysis
+  // with simple pointer comparison or basic alias analysis
+
+  std::cout << "\t\tChecking two instructions ";
+  printObject(def);
+  printObject(use);
+  
+  // For store/load pairs, check if they access the same pointer
+  if (auto *store = dyn_cast<StoreInst>(def)) {
+    if (auto *load = dyn_cast<LoadInst>(use)) {
+      return store->getPointerOperand() == load->getPointerOperand();
+    }
+  }
+  
+  // For GEP instructions, check base pointers
+  if (auto *gep1 = dyn_cast<GetElementPtrInst>(def)) {
+    if (auto *gep2 = dyn_cast<GetElementPtrInst>(use)) {
+      return gep1->getPointerOperand() == gep2->getPointerOperand();
+    }
+  }
+  
+  // Conservative fallback
+  std::cout << "Conservative fallback - returning True" << std::endl;
+  return true;
+}
+
+void getMemoryReachingDefsOptimized(
+  Instruction *I, const Instruction *parentInst,
+  MemorySSA &MSSA, 
+  SmallVector<const Instruction*, 10> &RD
+) {
+
+  MemoryAccess *MA = MSSA.getMemoryAccess(I);
+  if (!MA) {
+    std::cout << "\t\t Fallback Inst insert";
+    printObject(parentInst);
+    RD.push_back(parentInst); // Fallback
+    return;
+  }
+    
+  // Get the defining access - this is O(1) lookup in MemorySSA
+  MemoryAccess *DefiningAccess = nullptr;
+  if (auto *MU = dyn_cast<MemoryUse>(MA)) {
+    DefiningAccess = MU->getDefiningAccess();
+  } else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
+    DefiningAccess = MD->getDefiningAccess();
+  } else {
+    std::cout << "\t\t Neither memoryUse, or memoryDef" << std::endl;
+  }
+  
+  // Walk the MemorySSA def-use chain - this is much faster than 
+  // your original isPotentiallyReachable queries
+  SmallPtrSet<MemoryAccess*, 8> visited;
+  while (DefiningAccess && visited.insert(DefiningAccess).second) {  
+    if (auto *MD = dyn_cast<MemoryDef>(DefiningAccess)) {
+      Instruction *defInst = MD->getMemoryInst();
+
+      if(defInst) {
+        std::cout << "\t\tChecking feasibility for";
+        printObject(defInst);
+      }
+      // Quick alias check - much faster than full reachability analysis
+      if (defInst && couldAffectSameMemoryLocation(defInst, parentInst)) 
+      {
+        std::cout << "\tFound Aliasing Inst via memDef - pushing ";
+        printObject(defInst);
+        RD.push_back(defInst);
+        return; // Found the reaching definition
+      }
+      DefiningAccess = MD->getDefiningAccess();
+    }
+    
+    else if (auto *MP = dyn_cast<MemoryPhi>(DefiningAccess)) {
+      // Handle phi nodes - collect from all incoming values
+      for (unsigned i = 0; i < MP->getNumIncomingValues(); ++i) {
+        MemoryAccess *incoming = MP->getIncomingValue(i);
+        if (auto *incomingDef = dyn_cast<MemoryDef>(incoming)) {
+          Instruction *defInst = incomingDef->getMemoryInst();
+          if (defInst && couldAffectSameMemoryLocation(defInst, parentInst)) {
+            std::cout << "\tFound Aliasing Inst through memPhi - pushing ";
+            printObject(defInst);
+            RD.push_back(defInst);
+          }
+        }
+      }
+      break; // Don't continue past phi nodes
+    }
+    else {
+      break; // Unknown access type
+    }
+  }
+    
+  // If no memory definitions found, include the parent
+  if (RD.empty()) {
+      RD.push_back(parentInst);
+  }
+}
+
+void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA, 
+                        SmallVector<const Instruction*, 10> *RD) {
+    RD->clear();
+
+    std::cout << "\n\n Checking for Inst ";
+    printObject(I);
+    
+    // For each operand, find its reaching definitions
+    for (unsigned i = 0; i < I->getNumOperands(); ++i) {
+      Value *operand = I->getOperand(i);
+      
+      if (auto *operandInst = dyn_cast<Instruction>(operand)) {
+        std::cout << "\tDirect SSA dependency. Including ";
+        printObject(operandInst);
+        RD->push_back(operandInst);
+      }
+    }
+
+    if (I->mayReadOrWriteMemory())
+      getMemoryDependencies(I, MSSA,)
+}
+
+
 SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
- checkMemssaFunctions(llvm::Module &M) {
+checkMemssaFunctions(llvm::Module &M) {
   // std::cout << "Calling MemorySSA Functions" << std::endl;
   PassBuilder PB;
   FunctionAnalysisManager FAM;
@@ -766,30 +890,46 @@ SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
 
   // Register required alias analyses and memory dependence analysis
   FAM.registerPass([] { return MemorySSAAnalysis(); });
-  FAM.registerPass([] { return BasicAA(); }); // Basic Alias Analysis
+  FAM.registerPass([] { return TargetLibraryAnalysis(); });
 
-  clock_t start = clock();
+  // Install a proper AA stack (BasicAA + CFLAA + ScopedNoAliasAA, etc.)
+  FAM.registerPass([&] { return PB.buildDefaultAAPipeline(); });
 
-  auto writeDefsMap = collectSSAWriteDefsMap(FAM, M);
+  // clock_t start = clock();
 
-  clock_t end = clock();
-  double elapsed = double(end - start) / CLOCKS_PER_SEC;
-  printf("Time taken by SSA collectWriteDefs map "
-          "is: %.6f "
-          "seconds.\n",
-          elapsed);
+  // // auto writeDefsMap = 
+  // collectSSAWriteDefsMap(FAM, M);
+
+  // clock_t end = clock();
+  // double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  // printf("Time taken by SSA collectWriteDefs map "
+  //         "is: %.6f "
+  //         "seconds.\n",
+  //         elapsed);
 
 
-  return writeDefsMap;
+  // return writeDefsMap;
+  // writeDefsMap is global variable, available for access
+  llvm::SmallMapVector<const llvm::Instruction *,
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> 
+                       reachingDefsMap;
 
   // Run the pass on each function in the module
   for (Function &F : M) {
     if (!F.isDeclaration()) {
       MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+
+      // AAManager::Result models AAResults; bind as AAResults& to match your API
+      auto &AAResFromMgr = FAM.getResult<AAManager>(F);
+      AAResults &AA = AAResFromMgr;
       for (auto &BB : F) {
         for (Instruction &inst : BB) {
           llvm::SmallVector<const llvm::Instruction *, 10> RD;
-          calcSSAReachingDefs(&inst, MSSA, &RD);
+          // calcSSAReachingDefs(&inst, MSSA, &RD);
+          calcSSAReachingDefs_Curr(&inst, MSSA, AA, &RD);
+
+          // reachingDefsMap[&inst] = RD;
+
           if (RD.size() > 0) {
             printReachingDefs(&inst, RD);
           }
@@ -797,6 +937,7 @@ SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
       }
     }
   }
+  return reachingDefsMap;
 }
 
 static inline std::string toIR(const llvm::Value *V, const llvm::Module *M) {
@@ -896,7 +1037,11 @@ void runMDA() {
     checkMemdepFunctions(*M);
   else if (memssa){
     // get old Map / Old Defs
-    generateFAEncodings()
+    auto oldReachingDefs = generateFAEncodings();
+
+    // new Reaching Defs
+    std::cout << "\n\n Printing SSA Reaching Defs" << std::endl;
+    auto newReachingDefs = checkMemssaFunctions(*M);
 
     // auto newMap = checkMemssaFunctions(*M);
     // std::cout << "New Map Ready " << std::endl;
@@ -904,6 +1049,7 @@ void runMDA() {
 
     // compareMapsSimple(oldMap, newMap);
     // bool same = writeDefsMapEqualByText(oldMap, newMap, M.get());
+    // bool same = writeDefsMapEqualByText(oldReachingDefs, newReachingDefs, M.get());
     // std::cout << "Both maps are Same ? - " << same << std::endl;
   }
 
