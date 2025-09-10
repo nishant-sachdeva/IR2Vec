@@ -75,12 +75,12 @@ bool isLoadorStore(const llvm::Instruction* I);
 bool isLoad(const llvm::Instruction* I);
 bool isStore(const llvm::Instruction* I);
 
-template <typename T> void printObject(const T *obj) {
+template <typename T> std::string printObject(const T *obj) {
   std::string output;
   llvm::raw_string_ostream rso(output);
   obj->print(rso); // Call the `print` method of the object
   rso.flush();
-  std::cout << output << std::endl;
+  return output;
 }
 
 void print_write_defs_map(

@@ -18,6 +18,7 @@
 
 #include "llvm/Analysis/MemorySSA.h"
 #include "llvm/Analysis/AliasAnalysis.h" 
+#include "llvm/Analysis/MemoryLocation.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include <llvm/Analysis/BasicAliasAnalysis.h>
 #include <llvm/Analysis/DependenceAnalysis.h>
@@ -738,133 +739,199 @@ void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M) {
   // return writeDefsMap;
 }
 
-bool hasMemoryDependencies(const Instruction *I) {
-  std::cout << "\t\tChecking memory dependencies ";
-  printObject(I);
-  // Quick check - if it's in your writeDefsMap, it has memory dependencies
-  // This should be O(1) hash lookup using your existing optimized writeDefsMap
-  return writeDefsMap.count(I) > 0;
-}
 
-bool couldAffectSameMemoryLocation(const Instruction *def, const Instruction *use) {
-  // This replaces your expensive dominance and reachability analysis
-  // with simple pointer comparison or basic alias analysis
-
-  std::cout << "\t\tChecking two instructions ";
-  printObject(def);
-  printObject(use);
-  
-  // For store/load pairs, check if they access the same pointer
-  if (auto *store = dyn_cast<StoreInst>(def)) {
-    if (auto *load = dyn_cast<LoadInst>(use)) {
-      return store->getPointerOperand() == load->getPointerOperand();
-    }
+bool accessesSameMemoryLocation(Instruction *defInst, Value *targetMem, AAResults &AA) {
+  // Check if defInst modifies the same memory location as targetMem
+    
+  if (auto *store = dyn_cast<StoreInst>(defInst)) {
+    Value *storePtr = store->getPointerOperand();
+    return AA.isMustAlias(storePtr, targetMem);
   }
   
-  // For GEP instructions, check base pointers
-  if (auto *gep1 = dyn_cast<GetElementPtrInst>(def)) {
-    if (auto *gep2 = dyn_cast<GetElementPtrInst>(use)) {
-      return gep1->getPointerOperand() == gep2->getPointerOperand();
-    }
+  if (auto *load = dyn_cast<LoadInst>(defInst)) {
+    Value *loadPtr = load->getPointerOperand();
+    return AA.isMustAlias(loadPtr, targetMem);
+  }
+
+  if (isa<AllocaInst>(defInst)) {
+    return defInst == targetMem;
   }
   
-  // Conservative fallback
-  std::cout << "Conservative fallback - returning True" << std::endl;
-  return true;
+  if (defInst->mayWriteToMemory()) {
+    MemoryLocation defLoc = MemoryLocation::get(defInst);
+    MemoryLocation targetLoc(targetMem, LocationSize::beforeOrAfterPointer());
+    return AA.alias(defLoc, targetLoc) != AliasResult::NoAlias;
+  }
+
+  return false;
 }
 
-void getMemoryReachingDefsOptimized(
-  Instruction *I, const Instruction *parentInst,
-  MemorySSA &MSSA, 
-  SmallVector<const Instruction*, 10> &RD
-) {
+void collectLiveDefinitions(MemoryAccess *DefAccess, Value *targetMemLocation,
+                           AAResults &AA, SmallVector<const Instruction*, 10> &RD) {
 
-  MemoryAccess *MA = MSSA.getMemoryAccess(I);
-  if (!MA) {
-    std::cout << "\t\t Fallback Inst insert";
-    printObject(parentInst);
-    RD.push_back(parentInst); // Fallback
+  SmallPtrSet<MemoryAccess*, 8> visited;
+  SmallVector<MemoryAccess*, 8> worklist;
+
+  worklist.push_back(DefAccess);
+  IR2VEC_DEBUG(std::cout << "\t\tTop DefAccess " << printObject(DefAccess) << std::endl);
+
+  while (!worklist.empty()) {
+    IR2VEC_DEBUG(
+      std::cout << "\t\tEntered worklist loop" << std::endl
+    );
+    MemoryAccess *current = worklist.pop_back_val();
+  
+    if (!current || !visited.insert(current).second) {
+      IR2VEC_DEBUG(std::cout << "\t\tNot current, and insert failed" << std::endl);
+      continue;
+    }
+  
+    // const auto *MUOD = dyn_cast<MemoryUseOrDef>(current);
+    // if (!MUOD) {
+    //   IR2VEC_DEBUG(
+    //     std::cout << "MUOD is null" << std::endl
+    //   );
+    //   return;
+    // }
+
+    // const Instruction *MI = MUOD->getMemoryInst();
+    // if (!MI) {
+    //   IR2VEC_DEBUG(
+    //     std::cout << "MI is null" << std::endl
+    //   );
+    //   return;
+    // }
+
+    // IR2VEC_DEBUG(std::cout << "\t\t\tInstruction fetched from current memory Access " << printObject(MI) << std::endl);
+
+    // std::cout << "\t\t - Checking Def types" << std::endl;
+    if (auto *MD = dyn_cast<MemoryDef>(current)) {
+      Instruction *defInst = MD->getMemoryInst();
+      if(!defInst) {
+        IR2VEC_DEBUG(std::cout << "defInst is null - returning" << std::endl);
+        if(auto *rootInst = dyn_cast<AllocaInst>(targetMemLocation)) {
+          IR2VEC_DEBUG(
+            std::cout << "\t\t\t Current Inst reaching null. target mem is alloca. Adding to RD" << std::endl;
+          );
+          RD.push_back(rootInst);
+        }
+        return;
+      }
+      IR2VEC_DEBUG(std::cout << "\t\t\tChecking potential memDef " << printObject(defInst) << std::endl);
+
+      if (defInst && accessesSameMemoryLocation(defInst, targetMemLocation, AA)) {
+        IR2VEC_DEBUG(std::cout << "\t\t\t\tEstablished Alias Memory - adding Live RD" << std::endl);
+        RD.push_back(defInst);
+        return;
+        // This definition is "live" - MemorySSA guarantees it reaches our instruction
+      }
+      // Continue walking to find other live definitions
+      IR2VEC_DEBUG(std::cout << "\t\t\t\t Did not get memory Alias - moving to next" << std::endl);
+      worklist.push_back(MD->getDefiningAccess());
+    }
+    else if (auto *MP = dyn_cast<MemoryPhi>(current)) {
+      IR2VEC_DEBUG(std::cout << "Entered memoryPhi" << std::endl);
+      // Phi merges multiple live definitions
+      for (unsigned i = 0; i < MP->getNumIncomingValues(); ++i) {
+        worklist.push_back(MP->getIncomingValue(i));
+      }
+    }
+    else {
+      IR2VEC_DEBUG(std::cout << "not memory def, and not memoryPhi" << std::endl);
+    }
+  }
+}
+
+Value* getMemoryOperand(Instruction *I) {
+  // Use LLVM's built-in MemoryLocation API to get memory operands
+  IR2VEC_DEBUG(std::cout << "\t\tGetting memory operands for " << printObject(I) << std::endl);
+  if (!I->mayReadOrWriteMemory()) {
+    IR2VEC_DEBUG(std::cout << "\t\tDoes not read or write memory" << std::endl);
+    return nullptr;
+  }
+  
+  // Try to get a specific memory location for this instruction
+  MemoryLocation loc = MemoryLocation::get(I);
+  if (loc.Ptr) {
+    return const_cast<Value*>(loc.Ptr);
+  }
+  
+  // For alloca, it creates a memory location (itself)
+  if (isa<AllocaInst>(I)) {
+    IR2VEC_DEBUG(std::cout << "\t\tAlloca instruction. Return as is" << std::endl);
+    return I;
+  }
+  
+  // For instructions that don't have a single memory location
+  // (like calls with multiple memory effects), return nullptr
+  return nullptr;
+}
+
+
+void getLiveMemoryDefinitions(Instruction *I, MemorySSA &MSSA, AAResults &AA,
+                             SmallVector<const Instruction*, 10> &RD) {
+  // Get the memory operand for this instruction
+  Value *memOperand = getMemoryOperand(I);
+  if (!memOperand) {
+    IR2VEC_DEBUG(std::cout << "\t\tMemory operand not found" << std::endl);
     return;
   }
-    
-  // Get the defining access - this is O(1) lookup in MemorySSA
+
+  IR2VEC_DEBUG(
+    std::cout << "\t\tGetting Live memory definitions for Inst " << printObject(I) 
+    << "\n\t\tAnd memory operand is " << printObject(memOperand) << std::endl
+  );
+  
+  MemoryAccess *MA = MSSA.getMemoryAccess(I);
+  if (!MA) {
+    IR2VEC_DEBUG(std::cout << "\t\tMemory access not found" << std::endl);
+    return;
+  }
+  
   MemoryAccess *DefiningAccess = nullptr;
   if (auto *MU = dyn_cast<MemoryUse>(MA)) {
     DefiningAccess = MU->getDefiningAccess();
-  } else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
+  }
+  else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
     DefiningAccess = MD->getDefiningAccess();
-  } else {
-    std::cout << "\t\t Neither memoryUse, or memoryDef" << std::endl;
   }
   
-  // Walk the MemorySSA def-use chain - this is much faster than 
-  // your original isPotentiallyReachable queries
-  SmallPtrSet<MemoryAccess*, 8> visited;
-  while (DefiningAccess && visited.insert(DefiningAccess).second) {  
-    if (auto *MD = dyn_cast<MemoryDef>(DefiningAccess)) {
-      Instruction *defInst = MD->getMemoryInst();
+  if (!DefiningAccess) return;
 
-      if(defInst) {
-        std::cout << "\t\tChecking feasibility for";
-        printObject(defInst);
-      }
-      // Quick alias check - much faster than full reachability analysis
-      if (defInst && couldAffectSameMemoryLocation(defInst, parentInst)) 
-      {
-        std::cout << "\tFound Aliasing Inst via memDef - pushing ";
-        printObject(defInst);
-        RD.push_back(defInst);
-        return; // Found the reaching definition
-      }
-      DefiningAccess = MD->getDefiningAccess();
-    }
-    
-    else if (auto *MP = dyn_cast<MemoryPhi>(DefiningAccess)) {
-      // Handle phi nodes - collect from all incoming values
-      for (unsigned i = 0; i < MP->getNumIncomingValues(); ++i) {
-        MemoryAccess *incoming = MP->getIncomingValue(i);
-        if (auto *incomingDef = dyn_cast<MemoryDef>(incoming)) {
-          Instruction *defInst = incomingDef->getMemoryInst();
-          if (defInst && couldAffectSameMemoryLocation(defInst, parentInst)) {
-            std::cout << "\tFound Aliasing Inst through memPhi - pushing ";
-            printObject(defInst);
-            RD.push_back(defInst);
-          }
-        }
-      }
-      break; // Don't continue past phi nodes
-    }
-    else {
-      break; // Unknown access type
-    }
-  }
-    
-  // If no memory definitions found, include the parent
-  if (RD.empty()) {
-      RD.push_back(parentInst);
-  }
+  // if (auto *inst = dyn_cast<AllocaInst>(memOperand)) {
+  //   IR2VEC_DEBUG(std::cout << "Alloca inst - end of chain " << printObject(inst) << std::endl);
+  //   RD.push_back(inst);
+  //   return;
+  // }
+
+  // Walk MemorySSA chain to find all live definitions
+  collectLiveDefinitions(DefiningAccess, memOperand, AA, RD);
 }
 
-void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA, 
+void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA,  AAResults &AA, 
                         SmallVector<const Instruction*, 10> *RD) {
-    RD->clear();
+  RD->clear();
+  IR2VEC_DEBUG(std::cout << "\n\nStudying Inst " << printObject(I) << std::endl);
 
-    std::cout << "\n\n Checking for Inst ";
-    printObject(I);
-    
-    // For each operand, find its reaching definitions
-    for (unsigned i = 0; i < I->getNumOperands(); ++i) {
-      Value *operand = I->getOperand(i);
-      
-      if (auto *operandInst = dyn_cast<Instruction>(operand)) {
-        std::cout << "\tDirect SSA dependency. Including ";
-        printObject(operandInst);
+  if (I->mayReadOrWriteMemory()) {
+    IR2VEC_DEBUG(std::cout << "\tMay read of write memory, studying further" << std::endl);
+    getLiveMemoryDefinitions(I, MSSA, AA, *RD);
+  }
+
+  for (unsigned opIdx = 0; opIdx < I->getNumOperands(); ++opIdx) {
+    Value *operand = I->getOperand(opIdx);
+
+    if (auto *operandInst = dyn_cast<Instruction>(operand)) {
+      if (!operand->getType()->isPointerTy()) { 
+        // SSA Case: The operand instruction IS the definition (single def in SSA)
+        IR2VEC_DEBUG(std::cout << "\t Adding RD : Operand Instruction " << printObject(operandInst) << std::endl);
         RD->push_back(operandInst);
       }
+    } else if (isa<Constant>(operand)) {
+      IR2VEC_DEBUG(std::cout << "\tConstant value , skipping " << printObject(operand) << std::endl);
+      continue;
     }
-
-    if (I->mayReadOrWriteMemory())
-      getMemoryDependencies(I, MSSA,)
+  }
 }
 
 
@@ -1037,7 +1104,8 @@ void runMDA() {
     checkMemdepFunctions(*M);
   else if (memssa){
     // get old Map / Old Defs
-    auto oldReachingDefs = generateFAEncodings();
+    if(!IR2Vec::debug)
+      auto oldReachingDefs = generateFAEncodings();
 
     // new Reaching Defs
     std::cout << "\n\n Printing SSA Reaching Defs" << std::endl;
