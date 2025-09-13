@@ -64,8 +64,12 @@ cl::opt<unsigned> cl_dim("dim", cl::Optional, cl::init(300),
                          cl::desc("Dimension of the embeddings"),
                          cl::cat(category));
 
-cl::opt<bool> cl_memssa("memssa", cl::Optional,
-                        cl::desc("Running mem dep analysis on input .ll file"),
+cl::opt<bool> cl_writeDefsMap("writeDefsMap", cl::Optional,
+                        cl::desc("Testing writeDefsMap Collection"),
+                        cl::init(false), cl::cat(category));
+
+cl::opt<bool> cl_reachingDefsMap("reachingDefsMap", cl::Optional,
+                        cl::desc("Testing reachingDefs Collection"),
                         cl::init(false), cl::cat(category));
 
 cl::opt<std::string> cl_oname("o", cl::Required, cl::desc("Output file path"),
@@ -106,49 +110,50 @@ using MapTy = llvm::SmallMapVector<
     llvm::SmallVector<const llvm::Instruction*, 10>, 16>;
 
 std::map<std::string, std::set<std::string>> normalize(const MapTy &Mp) {
-  // IR2VEC_DEBUG(std::cout << "Normalize called for Map" << std::endl);
-  // IR2VEC_DEBUG(std::cout << "Sanity Check . Map.size() - " << Mp.size() << std::endl);
+  IR2VEC_DEBUG(std::cout << "Normalize called for Map" << std::endl);
+  IR2VEC_DEBUG(std::cout << "Sanity Check . Map.size() - " << Mp.size() << std::endl);
   std::map<std::string, std::set<std::string>> out;
 
   for (auto &kv : Mp) {
-    // IR2VEC_DEBUG(std::cout << "Reached inside loop" << std::endl);
+    IR2VEC_DEBUG(std::cout << "Reached inside loop" << std::endl);
     std::string k = printObject(kv.first);
-    // IR2VEC_DEBUG(std::cout << k << std::endl);
+    IR2VEC_DEBUG(std::cout << k << std::endl);
 
     std::set<std::string> vals;
     if(kv.second.empty()) vals.insert("empty_set");
     else {
       for (const llvm::Instruction *v : kv.second) {
         std::string obj = printObject(v);
-        // IR2VEC_DEBUG(std::cout << "\t\t" << obj << std::endl);
+        IR2VEC_DEBUG(std::cout << "\t\t" << obj << std::endl);
         vals.insert(obj);
       }
     }
-    // IR2VEC_DEBUG(std::cout << "Vals.size " << vals.size() << std::endl);
+    IR2VEC_DEBUG(std::cout << "Vals.size " << vals.size() << std::endl);
     out.emplace(std::move(k), std::move(vals));
   }
   return out;
 }
 
 bool writeDefsMapEqualByText(const MapTy &oldMap, const MapTy &newMap) {
-  // IR2VEC_DEBUG(std::cout << "Entered function to compare maps" << std::endl);
+  IR2VEC_DEBUG(std::cout << "Entered function to compare maps" << std::endl);
+  if(oldMap.size() == 0 and newMap.size() == 0) return true;
   if(oldMap.size() == 0) {
-    // IR2VEC_DEBUG(std::cout << "Size of old map is 0" << std::endl);
+    IR2VEC_DEBUG(std::cout << "Size of old map is 0" << std::endl);
     return false;
   }
 
   if (newMap.size() == 0) {
-    // IR2VEC_DEBUG(std::cout << "Size of new map is 0" << std::endl);
+    IR2VEC_DEBUG(std::cout << "Size of new map is 0" << std::endl);
     return false;
   }
 
-  // IR2VEC_DEBUG(std::cout << "Sanity Check new map size " << newMap.size() << std::endl);
+  IR2VEC_DEBUG(std::cout << "Sanity Check new map size " << newMap.size() << std::endl);
   auto newMapNorm = normalize(newMap);
-  // IR2VEC_DEBUG(std::cout << "Normalize done for new map" << std::endl);
+  IR2VEC_DEBUG(std::cout << "Normalize done for new map" << std::endl);
   
-  // IR2VEC_DEBUG(std::cout << "\nSanity Check old map size " << oldMap.size() << std::endl);
+  IR2VEC_DEBUG(std::cout << "\nSanity Check old map size " << oldMap.size() << std::endl);
   auto oldMapNorm = normalize(oldMap);
-  // IR2VEC_DEBUG(std::cout << "Normalize done for old map" << std::endl);
+  IR2VEC_DEBUG(std::cout << "Normalize done for old map" << std::endl);
 
   return oldMapNorm == newMapNorm;
 }
@@ -223,6 +228,8 @@ void setGlobalVars(int argc, char **argv) {
   WT = cl_WT;
   debug = cl_debug;
   printTime = cl_printTime;
+  test_writeDefs = cl_writeDefsMap;
+  test_reachingDefs = cl_reachingDefsMap;
 }
 
 void checkFailureConditions() {
@@ -281,23 +288,23 @@ static inline const Instruction* baseInstOf(const Instruction *I) {
 }
 
 static inline void recordDefFor(
-    SmallMapVector<const Instruction*, SmallVector<const Instruction*,10>,16>
-        &writeDefsMap,
-    const Instruction *UseOrDefInst,
-    const Instruction *DefInst) {
-      const Instruction* Base = baseInstOf(UseOrDefInst);
+  MapTy &writeDefsMap,
+  const Instruction *UseOrDefInst,
+  const Instruction *DefInst
+) {
+  const Instruction* Base = baseInstOf(UseOrDefInst);
 
-      // Keep going deeper only if we can actually go deeper
-      while(Base && Base->mayReadOrWriteMemory()) {
-        const Instruction* NextBase = baseInstOf(Base);
-        if (!NextBase) {
-            // Can't go deeper, stop here
-            break;
-        }
-        Base = NextBase;
-      }  
+  // Keep going deeper only if we can actually go deeper
+  while(Base && Base->mayReadOrWriteMemory()) {
+    const Instruction* NextBase = baseInstOf(Base);
+    if (!NextBase) {
+      // Can't go deeper, stop here
+      break;
+    }
+    Base = NextBase;
+  }  
 
-      if(Base && DefInst) writeDefsMap[Base].push_back(DefInst);
+  if(Base && DefInst) writeDefsMap[Base].push_back(DefInst);
 }
 
 inline bool isFakeDef(const llvm::Instruction *I) {
@@ -316,63 +323,39 @@ inline bool isFakeDef(const llvm::Instruction *I) {
   return true;
 }
 
-llvm::SmallMapVector<const llvm::Instruction *,
-                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> writeDefsMap;
   
-// llvm::SmallMapVector<const llvm::Instruction *,
-//                        llvm::SmallVector<const llvm::Instruction *, 10>, 16> 
-void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M) {
-  // std::cout << "Inside SSA writeDefsMap " << std::endl;
-
+void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M, MapTy &writeDefsMap) {
   for (Function &F: M) {
     if (!F.isDeclaration()) {
       MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
       for (auto &BB : F) {
         for (auto &I : BB) {
-          // std::cout << "\n\nChecking instruction ";
-          // IR2Vec::printObject(&I);
-          // std::cout << "isvolatile ? " << isVolatileOrAtomic(&I) << std::endl;
-          if (!I.mayReadOrWriteMemory()) continue;
-            // std::cout << "Does not read of write memory. Leaving out\n";
-            // printObject(&I);
-
-            // const Instruction* Base = baseInstOf(&I);
-            // std::cout << " For reference, Base here is ";
-            // if(Base) printObject(Base); else std::cout << "Null " << std::endl;
-
-          // if (isExcludedMemoryOp(&I))
-          //   continue;
+          IR2VEC_DEBUG(std::cout << "\n\nChecking instruction " << printObject(&I) << std::endl);
+          if (!I.mayReadOrWriteMemory()) {
+            IR2VEC_DEBUG(std::cout << "Does not read of write memory. Leaving out" << std::endl);
+            continue;
+          }
           MemoryAccess *MA = MSSA.getMemoryAccess(&I);
           if (!MA) {
-            // std::cout << "Memory access not received " << std::endl;
+            IR2VEC_DEBUG(std::cout << "Memory access not received " << std::endl);
             continue;
           }
           if (auto *MU = dyn_cast<MemoryUse>(MA)) {
             continue;
-              // std::cout << "\tEntered memory Use " << std::endl;
-            // MemorySSAWalker *Walker = MSSA.getWalker();
-            // MemoryAccess *Def = Walker->getClobberingMemoryAccess(MU);
-            // if (auto *MDef = dyn_cast<MemoryDef>(Def)) {
-            //   std::cout << "\tFound memory Def for use " << std::endl;
-            //   Instruction *DefInst = MDef->getMemoryInst();
-
-            //   recordDefFor(writeDefsMap, &I, DefInst);
-            // }
+            IR2VEC_DEBUG(std::cout << "\tEntered memory Use " << std::endl);
           } else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
-            // std::cout << "Entered follow up branch - memDef " << std::endl;
+            IR2VEC_DEBUG(std::cout << "Entered follow up branch - memDef " << std::endl);
             if (isFakeDef(&I))
-            // if (isa<llvm::LoadInst>(&I))
               continue; // skip fake defs (volatile/atomic loads)
             recordDefFor(writeDefsMap, &I, &I);
           } else if (auto *MPhi = dyn_cast<MemoryPhi>(MA)) {
-            // std::cout << "Phi node - skipping for now" << std::endl;
+            IR2VEC_DEBUG(std::cout << "Phi node - skipping" << std::endl);
             continue;
           }
         }
       }
     }
   }
-  // return writeDefsMap;
 }
 
 
@@ -599,8 +582,8 @@ void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA,  AAResults &AA,
 }
 
 
-SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
-checkMemssaFunctions(llvm::Module &M) {
+// SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
+void checkMemssaFunctions(llvm::Module &M, MapTy &resultMap) {
   // std::cout << "Calling MemorySSA Functions" << std::endl;
   PassBuilder PB;
   FunctionAnalysisManager FAM;
@@ -626,48 +609,64 @@ checkMemssaFunctions(llvm::Module &M) {
   // Install a proper AA stack (BasicAA + CFLAA + ScopedNoAliasAA, etc.)
   FAM.registerPass([&] { return PB.buildDefaultAAPipeline(); });
 
-  // clock_t start = clock();
+  if(IR2Vec::test_writeDefs) {
+    if(IR2Vec::printTime) {
+      IR2Vec::timeFunction("SSA collectWriteDefs map", [&]() {
+        collectSSAWriteDefsMap(FAM, M, resultMap);
+      });
+    }
+    else collectSSAWriteDefsMap(FAM, M, resultMap);
+  }
 
-  // // auto writeDefsMap = 
-  collectSSAWriteDefsMap(FAM, M);
+  else if (IR2Vec::test_reachingDefs) {
+    // Run the pass on each function in the module
+    for (Function &F : M) {
+      if (!F.isDeclaration()) {
+        MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
 
-  // clock_t end = clock();
-  // double elapsed = double(end - start) / CLOCKS_PER_SEC;
-  // printf("Time taken by SSA collectWriteDefs map "
-  //         "is: %.6f "
-  //         "seconds.\n",
-  //         elapsed);
-
-
-  return writeDefsMap;
-  // writeDefsMap is global variable, available for access
-  // SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16> reachingDefsMap;
-
-  // // Run the pass on each function in the module
-  // for (Function &F : M) {
-  //   if (!F.isDeclaration()) {
-  //     MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-
-  //     // AAManager::Result models AAResults
-  //     AAResults &AA = FAM.getResult<AAManager>(F);
-  //     for (auto &BB : F) {
-  //       for (Instruction &inst : BB) {
-  //         llvm::SmallVector<const llvm::Instruction *, 10> RD;
-  //         calcSSAReachingDefs_Curr(&inst, MSSA, AA, &RD);
-  //         if(RD.size() > 0 || isa<AllocaInst>(&inst) || 
-  //           isa<CallInst>(&inst) ||
-  //           isa<GetElementPtrInst>(&inst) ||
-  //           isa<ICmpInst>(&inst)) {
-  //           reachingDefsMap[&inst] = RD;
-  //         }
-  //       }
-  //     }
-  //   }
-  // }
-  // return reachingDefsMap;
+        // AAManager::Result models AAResults
+        AAResults &AA = FAM.getResult<AAManager>(F);
+        for (auto &BB : F) {
+          for (Instruction &inst : BB) {
+            llvm::SmallVector<const llvm::Instruction *, 10> RD;
+            calcSSAReachingDefs_Curr(&inst, MSSA, AA, &RD);
+            if(RD.size() > 0 || isa<AllocaInst>(&inst) || 
+              isa<CallInst>(&inst) ||
+              isa<GetElementPtrInst>(&inst) ||
+              isa<ICmpInst>(&inst)) {
+              resultMap[&inst] = RD;
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
-void runMDA() {
+void test_writedefsmap() {
+  auto M = getLLVMIR();
+  if (!M) {
+    std::cout << "Invalid module" << std::endl;
+    return;
+  }
+  auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
+
+  IR2Vec_FA FA(*M, vocabulary);
+  auto oldMap = FA.getWriteDefsMap();
+
+  // std::cout << "Old Map is ready" << std::endl;
+  // IR2Vec::print_write_defs_map(oldMap);
+  MapTy newMap;
+  checkMemssaFunctions(*M, newMap);
+  // std::cout << "New Map Ready " << std::endl;
+  // IR2Vec::print_write_defs_map(newMap);
+
+  // compareMapsSimple(oldMap, newMap);
+  bool same = writeDefsMapEqualByText(oldMap, newMap);
+  std::cout << "Both maps are Same ? - " << same << std::endl;
+}
+
+void test_reachingdefs() {
   auto M = getLLVMIR();
 
   // check if M is a vaid module or not
@@ -711,7 +710,8 @@ void runMDA() {
   IR2VEC_DEBUG(std::cout << "==> Native Reaching Defs Finished" << std::endl);
 
   IR2VEC_DEBUG(std::cout << "\n\nPrinting SSA Reaching Defs" << std::endl);
-  auto newReachingDefs = checkMemssaFunctions(*M);
+  MapTy newReachingDefs;
+  checkMemssaFunctions(*M, newReachingDefs);
   IR2VEC_DEBUG(std::cout << "\n\nPrinting Final SSA Reaching Defs\n\n" << std::endl);
 
   IR2VEC_DEBUG(
@@ -742,6 +742,16 @@ void runMDA() {
   // std::cout << "\n\n Printing SSA Reaching Defs" << std::endl;
   // auto newReachingDefs = checkMemssaFunctions(*M);
   // std::cout << "\n\n New SSA Reaching Defs ready" << std::endl;s
+
+}
+
+void runMDA() {
+  if (IR2Vec::test_writeDefs)
+    test_writedefsmap();
+  else if (IR2Vec::test_reachingDefs)
+    test_reachingdefs();
+  else
+    std::cout << "Please specify either of -writeDefsMap / -reachingDefsMap";
 
   return;
 }

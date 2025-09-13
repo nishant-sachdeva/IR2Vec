@@ -31,6 +31,8 @@ float IR2Vec::WA;
 float IR2Vec::WT;
 bool IR2Vec::debug;
 unsigned IR2Vec::DIM;
+bool IR2Vec::test_writeDefs;
+bool IR2Vec::test_reachingDefs;
 
 std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {
   static llvm::LLVMContext context;
@@ -58,11 +60,13 @@ void IR2Vec::print_write_defs_map(
     auto defs = item.second;
 
     // print out instruction
-    IR2Vec::printObject(ins);
-    if(defs.size() > 0)
+    std::cout << IR2Vec::printObject(ins) << "\t";
+    if(defs.size() > 0){
       for(auto def_ins : defs) {
-        std::cout << "\t" ; IR2Vec::printObject(def_ins);
+        std::cout << "\t" << IR2Vec::printObject(def_ins);
       }
+      std::cout << std::endl;
+    }
   }
   std::cout << "Write Defs Map concluded" << std::endl;
 }

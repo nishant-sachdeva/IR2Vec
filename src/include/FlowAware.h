@@ -150,19 +150,12 @@ public:
 
     dataMissCounter = 0;
     cyclicCounter = 0;
-    clock_t start = clock();
 
-    collectWriteDefsMap(M);
-
-    clock_t end = clock();
-    double elapsed = double(end - start) / CLOCKS_PER_SEC;
-    // printf("Time taken by Native collectWriteDefs map "
-    //        "is: %.6f "
-    //        "seconds.\n",
-    //        elapsed);
-
-    // IR2Vec::print_write_defs_map(writeDefsMap);
-    // return;
+    if(IR2Vec::printTime) {
+      IR2Vec::timeFunction("Native collectWriteDefs map", [&]() {
+        collectWriteDefsMap(M);
+      });
+    } else collectWriteDefsMap(M);
 
     llvm::CallGraph cg = llvm::CallGraph(M);
 

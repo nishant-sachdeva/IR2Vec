@@ -32,6 +32,9 @@
 #include <iostream>
 #include <map>
 #include <memory>
+#include <ctime>
+#include <functional>
+#include <string>
 
 namespace IR2Vec {
 
@@ -59,6 +62,8 @@ extern float WO;
 extern float WA;
 extern float WT;
 extern bool debug;
+extern bool test_writeDefs;
+extern bool test_reachingDefs;
 extern unsigned DIM;
 std::unique_ptr<llvm::Module> getLLVMIR();
 void scaleVector(Vector &vec, float factor);
@@ -90,6 +95,20 @@ void print_write_defs_map(
                        llvm::SmallVector<const llvm::Instruction *, 10>, 16>
       writeDefsMapObj
 );
+
+// Generic timing wrapper function
+template<typename Func>
+void timeFunction(const std::string& functionName, Func&& func) {
+  clock_t start = clock();
+  
+  // Execute the function
+  func();
+  
+  clock_t end = clock();
+  double elapsed = double(end - start) / CLOCKS_PER_SEC;
+  // Replace the printf lines with:
+  std::cout << "Time taken by " << functionName << " is: " << elapsed << " seconds." << std::endl;
+}
 } // namespace IR2Vec
 
 #endif
