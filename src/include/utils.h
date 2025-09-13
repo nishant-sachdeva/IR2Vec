@@ -76,6 +76,10 @@ bool isLoad(const llvm::Instruction* I);
 bool isStore(const llvm::Instruction* I);
 
 template <typename T> std::string printObject(const T *obj) {
+  if(!obj) {
+    std::cout << "Null Object" << std::endl;
+    return std::string("Null object");
+  }
   std::string output;
   llvm::raw_string_ostream rso(output);
   obj->print(rso); // Call the `print` method of the object

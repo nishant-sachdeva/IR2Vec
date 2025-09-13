@@ -136,8 +136,11 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
       auto tmp = func2Vec(f, funcStack);
       funcVecMap[&f] = tmp;
     }
-  }
 
+    for (const auto& [key, value] : instReachingDefsMap) {
+      instReachingDefsMapStorage[key] = value;
+    }
+  }
   for (auto funcit : funcVecMap) {
     updateFuncVecMapWithCallee(funcit.first);
   }
@@ -348,6 +351,7 @@ Vector IR2Vec_FA::func2Vec(Function &F,
   funcStack.push_back(&F);
 
   instReachingDefsMap.clear();
+
   allSCCs.clear();
   reverseReachingDefsMap.clear();
   SCCAdjList.clear();
@@ -377,6 +381,7 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     for (auto &I : *b) {
       for (int i = 0; i < I.getNumOperands(); i++) {
         if (isa<Instruction>(I.getOperand(i))) {
+          // std::cout << "Calling getReachingDefs from func2Vec" << std::endl;
           auto RD = getReachingDefs(&I, i);
           if (instReachingDefsMap.find(&I) == instReachingDefsMap.end()) {
             instReachingDefsMap[&I] = RD;
@@ -390,11 +395,11 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
-  for (auto &Inst: instReachingDefsMap) {
-    auto RD = Inst.second;
-    auto inst = Inst.first;
-    printReachingDefs(inst, RD);
-  }
+  // for (auto &Inst: instReachingDefsMap) {
+  //   auto RD = Inst.second;
+  //   auto inst = Inst.first;
+  //   printReachingDefs(inst, RD);
+  // }
 
   // one time Reversing instReachingDefsMap to be used to calculate SCCs
   for (auto &I : instReachingDefsMap) {
@@ -699,6 +704,7 @@ bool isPotentiallyReachable(
 
 SmallVector<const Instruction *, 10>
 IR2Vec_FA::getReachingDefs(const Instruction *I, unsigned loc) {
+  // std::cout << "\tChecking Inst " << printObject(I) << std::endl;
   IR2VEC_DEBUG(
       outs()
       << "Call to getReachingDefs Started****************************\n");
@@ -982,7 +988,9 @@ void IR2Vec_FA::solveInsts(
           B.push_back(vec);
         } else {
           if (isa<Instruction>(inst->getOperand(i))) {
+            // std::cout << "Calling getReachingDefs from SolveInsts" << std::endl;
             auto RD = getReachingDefs(inst, i);
+            // TODO - Check and add this value to Reaching Defs
             for (auto i : RD) {
               // Check if value of RD is precomputed
               if (instVecMap.find(i) == instVecMap.end()) {
@@ -1151,6 +1159,7 @@ void IR2Vec_FA::solveSingleComponent(
       vecOp = getValue("label");
     } else {
       if (isa<Instruction>(I.getOperand(i))) {
+        // std::cout << "Calling getReachingDefs from solveSingleComponent" << std::endl;
         auto RD = getReachingDefs(&I, i);
         RDList.insert(RDList.end(), RD.begin(), RD.end());
       } else if (isa<PointerType>(I.getOperand(i)->getType())) {
@@ -1309,6 +1318,7 @@ void IR2Vec_FA::inst2Vec(
       vecOp = getValue("label");
     } else {
       if (isa<Instruction>(I.getOperand(i))) {
+        // std::cout << "Calling getReachingDefs from inst2Vec" << std::endl;
         auto RD = getReachingDefs(&I, i);
         RDList.insert(RDList.end(), RD.begin(), RD.end());
       } else if (isa<PointerType>(I.getOperand(i)->getType()))

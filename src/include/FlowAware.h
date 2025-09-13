@@ -54,6 +54,10 @@ private:
                        llvm::SmallVector<const llvm::Instruction *, 10>, 16>
       instReachingDefsMap;
 
+  llvm::SmallMapVector<const llvm::Instruction *,
+                      llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+    instReachingDefsMapStorage;
+
   // Reverse instReachingDefsMap
   llvm::SmallMapVector<const llvm::Instruction *,
                        llvm::SmallVector<const llvm::Instruction *, 10>, 16>
@@ -152,10 +156,10 @@ public:
 
     clock_t end = clock();
     double elapsed = double(end - start) / CLOCKS_PER_SEC;
-    printf("Time taken by Native collectWriteDefs map "
-           "is: %.6f "
-           "seconds.\n",
-           elapsed);
+    // printf("Time taken by Native collectWriteDefs map "
+    //        "is: %.6f "
+    //        "seconds.\n",
+    //        elapsed);
 
     // IR2Vec::print_write_defs_map(writeDefsMap);
     return;
@@ -214,9 +218,8 @@ public:
   }
 
   llvm::SmallMapVector<const llvm::Instruction *,
-                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
-  getInstReachingDefsMap() {
-    return instReachingDefsMap;
+                       llvm::SmallVector<const llvm::Instruction *, 10>, 16> getInstReachingDefsMap() {
+    return instReachingDefsMapStorage;
   }
 
   IR2Vec::Vector getProgramVector() { return pgmVector; }

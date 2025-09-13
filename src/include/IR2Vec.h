@@ -12,6 +12,7 @@
 #include "llvm/ADT/MapVector.h"
 #include "llvm/IR/Module.h"
 #include <string>
+#include <iterator>
 
 #include "Vocabulary.h"
 namespace IR2Vec {
