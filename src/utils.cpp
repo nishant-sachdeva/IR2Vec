@@ -30,8 +30,6 @@ float IR2Vec::WO;
 float IR2Vec::WA;
 float IR2Vec::WT;
 bool IR2Vec::debug;
-bool IR2Vec::memdep;
-bool IR2Vec::memssa;
 unsigned IR2Vec::DIM;
 
 std::unique_ptr<llvm::Module> IR2Vec::getLLVMIR() {

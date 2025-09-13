@@ -60,8 +60,6 @@ extern float WA;
 extern float WT;
 extern bool debug;
 extern unsigned DIM;
-extern bool memdep;
-extern bool memssa;
 std::unique_ptr<llvm::Module> getLLVMIR();
 void scaleVector(Vector &vec, float factor);
 // newly added

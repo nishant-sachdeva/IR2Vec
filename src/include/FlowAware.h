@@ -162,7 +162,7 @@ public:
     //        elapsed);
 
     // IR2Vec::print_write_defs_map(writeDefsMap);
-    return;
+    // return;
 
     llvm::CallGraph cg = llvm::CallGraph(M);
 
