@@ -320,6 +320,7 @@ inline bool isFakeDef(const llvm::Instruction *I) {
   if (isa<llvm::LoadInst>(I))
     return true;
 
+  // TODO :: Refine this function. For now, conservative estimate - true
   return true;
 }
 
@@ -549,7 +550,7 @@ void getLiveMemoryDefinitions(Instruction *I, Value* memOperand, MemorySSA &MSSA
   collectLiveDefinitions(DefiningAccess, memOperand, AA, RD, I);
 }
 
-void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA,  AAResults &AA, 
+void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,  AAResults &AA, 
                         SmallVector<const Instruction*, 10> *RD) {
   RD->clear();
   IR2VEC_DEBUG(std::cout << "\n\nStudying Inst " << printObject(I) << std::endl);
@@ -577,6 +578,30 @@ void calcSSAReachingDefs_Curr(Instruction *I, MemorySSA &MSSA,  AAResults &AA,
     } else if (isa<Constant>(operand)) {
       IR2VEC_DEBUG(std::cout << "\tConstant value , skipping " << printObject(operand) << std::endl);
       continue;
+    }
+  }
+}
+
+void collectSSAReachingDefs(FunctionAnalysisManager &FAM, Module &M, MapTy &resultMap) {
+// Run the pass on each function in the module
+  for (Function &F : M) {
+    if (!F.isDeclaration()) {
+      MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+
+      // AAManager::Result models AAResults
+      AAResults &AA = FAM.getResult<AAManager>(F);
+      for (auto &BB : F) {
+        for (Instruction &inst : BB) {
+          llvm::SmallVector<const llvm::Instruction *, 10> RD;
+          _impl_collectSSAReachingDefs(&inst, MSSA, AA, &RD);
+          if(RD.size() > 0 || isa<AllocaInst>(&inst) || 
+            isa<CallInst>(&inst) ||
+            isa<GetElementPtrInst>(&inst) ||
+            isa<ICmpInst>(&inst)) {
+            resultMap[&inst] = RD;
+          }
+        }
+      }
     }
   }
 }
@@ -619,27 +644,11 @@ void checkMemssaFunctions(llvm::Module &M, MapTy &resultMap) {
   }
 
   else if (IR2Vec::test_reachingDefs) {
-    // Run the pass on each function in the module
-    for (Function &F : M) {
-      if (!F.isDeclaration()) {
-        MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-
-        // AAManager::Result models AAResults
-        AAResults &AA = FAM.getResult<AAManager>(F);
-        for (auto &BB : F) {
-          for (Instruction &inst : BB) {
-            llvm::SmallVector<const llvm::Instruction *, 10> RD;
-            calcSSAReachingDefs_Curr(&inst, MSSA, AA, &RD);
-            if(RD.size() > 0 || isa<AllocaInst>(&inst) || 
-              isa<CallInst>(&inst) ||
-              isa<GetElementPtrInst>(&inst) ||
-              isa<ICmpInst>(&inst)) {
-              resultMap[&inst] = RD;
-            }
-          }
-        }
-      }
-    }
+    if(IR2Vec::printTime) {
+      IR2Vec::timeFunction("SSA ReachingDefs map", [&]() {
+        collectSSAReachingDefs(FAM, M, resultMap);
+      });
+    } else collectSSAReachingDefs(FAM, M, resultMap);
   }
 }
 

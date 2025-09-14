@@ -10,8 +10,16 @@ if [ $# -eq 0 ]; then
     exit 1
 fi
 
-FOLDER_PATH="$1"
-OUTPUT_FILE="${2:-batch_results.txt}"
+DEFS="$1"
+if [[ "$DEFS" != "writeDefsMap" && "$DEFS" != "reachingDefsMap" ]]; then
+    echo "Error: Invalid value for DEFS. Must be either 'writeDefsMap' or 'reachingDefsMap'"
+    echo "Usage: $0 <writeDefsMap|reachingDefsMap>"
+    exit 1
+fi
+
+
+FOLDER_PATH="$2"
+OUTPUT_FILE="${3:-batch_results.txt}"
 
 # Check if folder exists
 if [ ! -d "$FOLDER_PATH" ]; then
@@ -47,7 +55,7 @@ while IFS= read -r -d '' ll_file; do
     
     echo -ne "\rProcessing ($count): $filename"
     # Run ir2vec and capture the output
-    output=$($IR2VEC_PATH -writeDefsMap -fa -level p -o test.txt "$ll_file" 2>&1)
+    output=$($IR2VEC_PATH -$DEFS -fa -level p -o test.txt "$ll_file" 2>&1)
     
     # Check if command was successful
     if [ $? -eq 0 ]; then
