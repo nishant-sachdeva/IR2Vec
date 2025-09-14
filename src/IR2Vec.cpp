@@ -697,8 +697,7 @@ void test_reachingdefs() {
   o.close();
   IR2Vec::debug = cl_debug;
 
-  // oldReachingDefs = FA.getInstReachingDefsMap();
-  oldReachingDefs = FA.getWriteDefsMap();
+  oldReachingDefs = FA.getInstReachingDefsMap();
   IR2VEC_DEBUG(std::cout << "Native Reaching Defs ready" << std::endl);
   IR2VEC_DEBUG(
     for (auto &Inst: oldReachingDefs) {
