@@ -39,16 +39,14 @@ using namespace IR2Vec;
 
 void IR2Vec_FA::getTransitiveUse(
     const Instruction *root, const Instruction *def,
-    SmallVector<const Instruction *, 100> &visitedList,
+    SmallPtrSet<const Instruction *, 32> &visitedList,
     SmallVector<const Instruction *, 10> toAppend) {
   unsigned operandNum = 0;
-  visitedList.push_back(def);
+  visitedList.insert(def);
 
   for (auto U : def->users()) {
     if (auto use = dyn_cast<Instruction>(U)) {
-      if (std::find(visitedList.begin(), visitedList.end(), use) ==
-          visitedList.end()) {
-        
+      if (visitedList.count(use) == 0) {
         if (isMemOp(use->getOpcodeName(), operandNum, memWriteOps) &&
             use->getOperand(operandNum) == def) {
           writeDefsMap[root].push_back(use);
@@ -64,7 +62,8 @@ void IR2Vec_FA::getTransitiveUse(
 }
 
 void IR2Vec_FA::collectWriteDefsMap(Module &M) {
-  SmallVector<const Instruction *, 100> visitedList;
+  // SmallVector<const Instruction *, 100> visitedList;
+  SmallPtrSet<const Instruction *, 32> visitedList;
   for (auto &F : M) {
     if (!F.isDeclaration()) {
       EliminateUnreachableBlocks(F);
@@ -74,14 +73,12 @@ void IR2Vec_FA::collectWriteDefsMap(Module &M) {
           if ((isMemOp(I.getOpcodeName(), operandNum, memAccessOps) ||
                isMemOp(I.getOpcodeName(), operandNum, memWriteOps) ||
                strcmp(I.getOpcodeName(), "alloca") == 0) &&
-              std::find(visitedList.begin(), visitedList.end(), &I) ==
-                  visitedList.end()) {
+               (visitedList.count(&I) == 0)) {
             if (I.getNumOperands() > 0) {
               if (auto parent =
                       dyn_cast<Instruction>(I.getOperand(operandNum))) {
-                if (std::find(visitedList.begin(), visitedList.end(), parent) ==
-                    visitedList.end()) {
-                  visitedList.push_back(parent);
+                if (visitedList.count(parent) == 0) {
+                  visitedList.insert(parent);
                   getTransitiveUse(parent, parent, visitedList);
                 }
               }

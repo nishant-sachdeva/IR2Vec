@@ -80,7 +80,7 @@ private:
   void collectWriteDefsMap(llvm::Module &M);
   void getTransitiveUse(
       const llvm::Instruction *root, const llvm::Instruction *def,
-      llvm::SmallVector<const llvm::Instruction *, 100> &visitedList,
+      llvm::SmallPtrSet<const llvm::Instruction *, 32> &visitedList,
       llvm::SmallVector<const llvm::Instruction *, 10> toAppend = {});
   llvm::SmallVector<const llvm::Instruction *, 10>
   getReachingDefs(const llvm::Instruction *, unsigned i);
