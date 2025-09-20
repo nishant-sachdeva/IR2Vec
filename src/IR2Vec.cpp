@@ -296,8 +296,7 @@ static inline const Instruction *underlyingInst(const Instruction *I) {
   return dyn_cast<Instruction>(Ptr);
 }
 
-
-static inline const Instruction *baseInstOf(const Instruction* I) {
+static inline const Instruction *baseInstOf(const Instruction *I) {
   const Instruction *Base = underlyingInst(I);
 
   // Keep going deeper only if we can actually go deeper
@@ -313,11 +312,10 @@ static inline const Instruction *baseInstOf(const Instruction* I) {
   return Base;
 }
 
-
 static inline void recordDefFor(MapTy &writeDefsMap,
                                 const Instruction *UseOrDefInst,
                                 const Instruction *DefInst) {
-  const Instruction* Base = baseInstOf(UseOrDefInst);
+  const Instruction *Base = baseInstOf(UseOrDefInst);
   if (Base && DefInst)
     writeDefsMap[Base].push_back(DefInst);
 }
@@ -379,91 +377,28 @@ void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M,
   }
 }
 
-bool accessesSameMemoryLocation(Instruction *srcInst, Value *targetMem, AAResults &AA) {
-  if (!targetMem) {
-    IR2VEC_DEBUG(std::cout << "\t\tTargetMem is Null " << std::endl);
+bool accessesSameMemoryLocation(Instruction *srcInst, Value *targetMem,
+                                AAResults &AA) {
+  if (!targetMem || !srcInst) // || !srcInst->mayWriteToMemory())
     return false;
-  }
-  
-  if(!srcInst->mayWriteToMemory()) {
-    IR2VEC_DEBUG(std::cout << "\t\tDefInst should write to memory" << std::endl);
-    return false;
-  }
 
-  IR2VEC_DEBUG(
-    std::cout << "\t\t\tChecking memory Alias between " << printObject(srcInst) << " " << printObject(targetMem) << std::endl
-  );
+  const Instruction *defInst = baseInstOf(srcInst);
+  if (!defInst) defInst = srcInst;
 
-  const Instruction* defInst = baseInstOf(srcInst);
+  targetMem = llvm::getUnderlyingObject(targetMem);
 
-  if(!defInst) defInst = srcInst;
-
-  IR2VEC_DEBUG(
-    std::cout << "\t\t\tFetched Base Inst " << printObject(defInst) << std::endl
-  );
-
-  if (isa<GetElementPtrInst>(defInst)) {
-    const Value *defPtr = getUnderlyingObject(defInst);
-    const Value *targetPtr = getUnderlyingObject(targetMem);
-    return !AA.isNoAlias(defPtr, targetPtr);
-  }
-
-  if (auto *CB = dyn_cast<CallBase>(defInst);
-    CB && (CB->returnDoesNotAlias() || CB->getType()->isPointerTy()))
-    return !AA.isNoAlias(getUnderlyingObject(defInst), getUnderlyingObject(targetMem));
-  
-  if (auto *PN = dyn_cast<PHINode>(defInst)) {
-    const Value *targetPtr = getUnderlyingObject(targetMem);
-    for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i) {
-      if (!AA.isNoAlias(getUnderlyingObject(PN->getIncomingValue(i)), targetPtr))
-        return true;
-    }
-    return false;
-  }
-
-  // Select: similar to PHI but with two operands.
-  if (auto *SI = dyn_cast<SelectInst>(defInst)) {
-    const Value *targetPtr = getUnderlyingObject(targetMem);
-    if (!AA.isNoAlias(getUnderlyingObject(SI->getTrueValue()),  targetPtr) ||
-        !AA.isNoAlias(getUnderlyingObject(SI->getFalseValue()), targetPtr))
-      return true;
-    return false;
-  }
-
-  if (isa<AllocaInst>(defInst)) {
-    return defInst == targetMem;
-  }
-
-  MemoryLocation defLoc = MemoryLocation::get(defInst);
-  if (!defLoc.Ptr) {
-    IR2VEC_DEBUG(std::cout << "defloc ptr is null" << std::endl);
-    return false;
-  }
-  IR2VEC_DEBUG(std::cout << "\t\tPrintObject defLoc.Ptr" << printObject(defLoc.Ptr) << std::endl);
-
-  const Value *targetPtr = getUnderlyingObject(targetMem);
-  if(!targetPtr) {
-    IR2VEC_DEBUG(std::cout << "\t\tTargetPtr is Null. Default to false " << std::endl);
-    return false;
-  }
-  IR2VEC_DEBUG(std::cout << "\t\ttargetPtr fetched is " << printObject(targetPtr) << std::endl);
-  
-  const Value *defPtr = getUnderlyingObject(defLoc.Ptr);
-  if(!defPtr) {
-    IR2VEC_DEBUG(std::cout << "\t\tdefPtr is Null. Default to false " << std::endl);
-    return false;
-  }
-  IR2VEC_DEBUG(std::cout << "\t\tdefPtr fetched is " << printObject(defPtr) << std::endl);
-
-  return !AA.isNoAlias(defPtr, targetPtr);
+  IR2VEC_DEBUG(std::cout << "\t\t\tSrc Inst " << printObject(srcInst) << " Base Inst " << printObject(defInst)
+                      << std::endl);
+  IR2VEC_DEBUG(std::cout << "\t\t\tChecking Alias with targetMem " << printObject(targetMem) << std::endl);
+  return !AA.isNoAlias(defInst, targetMem);
 }
 
-void _impl_collectLiveDefinitions(MemoryAccess *DefAccess, Value *targetMemLocation,
-                            AAResults &AA,
-                            SmallVector<const Instruction *, 10> &RD,
-                            Instruction *rootInst) {
+void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
+                                  Value *targetMemLocation, AAResults &AA,
+                                  SmallVector<const Instruction *, 10> &RD,
+                                  Instruction *rootInst) {
 
-  SmallPtrSet<const Instruction*, 32> visitedList;
+  SmallPtrSet<const Instruction *, 32> visitedList;
   SmallVector<MemoryAccess *, 8> worklist;
 
   worklist.push_back(DefAccess);
@@ -513,7 +448,7 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess, Value *targetMemLocat
         continue;
       }
 
-      if (llvm::isa<llvm::LoadInst>(defInst)) {
+      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(defInst); LI && LI->isVolatile()) {
         IR2VEC_DEBUG(std::cout
                      << "\t\t\t\tSkip this instruction - it's a volatile load"
                      << std::endl);
@@ -543,16 +478,17 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess, Value *targetMemLocat
         worklist.push_back(MP->getIncomingValue(i));
       }
     } else {
-      IR2VEC_DEBUG(std::cout << "\t\tnot memory def, and not memoryPhi. Skipping"
-                             << std::endl);
+      IR2VEC_DEBUG(std::cout
+                   << "\t\tnot memory def, and not memoryPhi. Skipping"
+                   << std::endl);
     }
   }
   IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
 }
 
-void collectLiveDefinitions(Instruction *I, Value *memOperand,
-                              MemorySSA &MSSA, AAResults &AA,
-                              SmallVector<const Instruction *, 10> &RD) {
+void collectLiveDefinitions(Instruction *I, Value *memOperand, MemorySSA &MSSA,
+                            AAResults &AA,
+                            SmallVector<const Instruction *, 10> &RD) {
   // Get the memory operand for this instruction
   // Value *memOperand = getMemoryOperand(I);
   if (!memOperand) {
@@ -614,7 +550,8 @@ void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
                                << printObject(operandInst) << std::endl);
         RD->push_back(operandInst);
       } else {
-        IR2VEC_DEBUG(std::cout << "\tOperand is pointer " << printObject(operand) << " studying further"
+        IR2VEC_DEBUG(std::cout << "\tOperand is pointer "
+                               << printObject(operand) << " studying further"
                                << std::endl);
         collectLiveDefinitions(I, operand, MSSA, AA, *RD);
       }
