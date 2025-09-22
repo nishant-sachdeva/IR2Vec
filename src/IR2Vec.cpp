@@ -492,104 +492,74 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
   IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
 }
 
-void handlePhiInCollectLiveDefinitions(
-    PHINode *PHI, Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
-    SmallVector<const Instruction *, 10> &RD) {
-  IR2VEC_DEBUG(
-      std::cout << "\t\tHandling PHI instruction in collectLiveDefinitions: "
-                << printObject(PHI) << std::endl);
+void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
+                   AAResults &AA, SmallVector<const Instruction *, 10> &RD) {
+  IR2VEC_DEBUG(std::cout << "\t\tHandling instruction with null MemoryAccess: "
+                         << printObject(I) << std::endl);
 
-  BasicBlock *BB = PHI->getParent();
+  BasicBlock *BB = I->getParent();
   MemoryAccess *StartAccess = nullptr;
 
-  // Look for MemoryPhi in this block
-  if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
-    StartAccess = MPhi;
-    IR2VEC_DEBUG(std::cout << "\t\t\tFound MemoryPhi for PHI's basic block"
-                           << std::endl);
-  } else {
-    // No MemoryPhi, use live-on-entry
-    StartAccess = MSSA.getLiveOnEntryDef();
-    IR2VEC_DEBUG(std::cout << "\t\t\tNo MemoryPhi found, using live-on-entry"
-                           << std::endl);
-  }
-
-  if (StartAccess) {
-    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, PHI);
-  } else {
-    IR2VEC_DEBUG(
-        std::cout
-        << "\t\t\tNo StartAccess found for PHI, adding memOperand directly"
-        << std::endl);
-    RD.push_back(memOperand);
-  }
-}
-
-void handleSelectInCollectLiveDefinitions(
-    SelectInst *SI, Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
-    SmallVector<const Instruction *, 10> &RD) {
-  IR2VEC_DEBUG(
-      std::cout << "\t\tHandling Select instruction in collectLiveDefinitions: "
-                << printObject(SI) << std::endl);
-
-  BasicBlock *BB = SI->getParent();
-  MemoryAccess *StartAccess = nullptr;
-
-  // STEP 1: Look for the most recent MemoryDef BEFORE this select in the same
-  // block This is crucial because select can appear anywhere in a basic block
+  // STEP 1: Look for the most recent MemoryDef BEFORE this instruction in the
+  // same block
   auto *BlockAccesses = MSSA.getBlockAccesses(BB);
   if (BlockAccesses) {
     IR2VEC_DEBUG(
-        std::cout << "\t\t\tSearching for MemoryDef before Select in same block"
-                  << std::endl);
+        std::cout
+        << "\t\t\tSearching for MemoryDef before instruction in same block"
+        << std::endl);
 
     for (auto &Access : *BlockAccesses) {
       if (auto *MD = dyn_cast<MemoryDef>(&Access)) {
         Instruction *DefInst = MD->getMemoryInst();
 
-        // Check if this MemoryDef comes BEFORE our select instruction
-        if (DefInst && DefInst->comesBefore(SI)) {
+        // Check if this MemoryDef comes BEFORE our instruction
+        if (DefInst && DefInst->comesBefore(I)) {
           StartAccess = const_cast<MemoryDef *>(MD);
-          IR2VEC_DEBUG(std::cout << "\t\t\t\tFound MemoryDef before Select: "
-                                 << printObject(DefInst) << std::endl);
-          // Continue further - we want the MOST RECENT one before the select
-          continue;
+          IR2VEC_DEBUG(std::cout
+                       << "\t\t\t\tFound MemoryDef before instruction: "
+                       << printObject(DefInst) << std::endl);
+          continue; // Keep looking for more recent MemoryDefs
         }
+
+        // If we reach here, this MemoryDef comes after our instruction - stop
+        // searching
         IR2VEC_DEBUG(
             std::cout
-            << "\t\t\t\tReached MemoryDef after Select, stopping search"
+            << "\t\t\t\tReached MemoryDef after instruction, stopping search"
             << std::endl);
+        break;
       }
     }
   }
 
-  // STEP 2: If no MemoryDef found before select, check for MemoryPhi at block
-  // start
+  // STEP 2: If no MemoryDef found before instruction, check for MemoryPhi at
+  // block start
   if (!StartAccess) {
     IR2VEC_DEBUG(
-        std::cout << "\t\t\tNo MemoryDef before Select, checking for MemoryPhi"
-                  << std::endl);
+        std::cout
+        << "\t\t\tNo MemoryDef before instruction, checking for MemoryPhi"
+        << std::endl);
 
     if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
       StartAccess = MPhi;
       IR2VEC_DEBUG(std::cout
-                   << "\t\t\t\tFound MemoryPhi for Select's basic block"
+                   << "\t\t\t\tFound MemoryPhi for instruction's basic block"
                    << std::endl);
     }
   }
 
-  // STEP 3: Proceed with normal MemorySSA analysis
+  // STEP 3: Proceed with normal MemorySSA analysis or fallback
   if (StartAccess) {
     IR2VEC_DEBUG(
         std::cout
         << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
         << printObject(StartAccess) << std::endl);
-    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, SI);
+    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
   } else {
     IR2VEC_DEBUG(
-        std::cout
-        << "\t\t\tNo StartAccess found for Select, adding memOperand directly"
-        << std::endl);
+        std::cout << "\t\t\tNo StartAccess found, adding memOperand directly"
+                  << std::endl);
     RD.push_back(memOperand);
   }
 }
@@ -607,42 +577,12 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
                          << "\n\t\tAnd memory operand Inst is "
                          << printObject(memOperand) << std::endl);
 
-  if (auto *PHI = dyn_cast<PHINode>(I)) {
-    IR2VEC_DEBUG(std::cout << "\t\tPhi instr. Handling separately"
-                           << std::endl);
-    handlePhiInCollectLiveDefinitions(PHI, memOperand, MSSA, AA, RD);
-    return;
-  }
-
-  if (auto *SI = dyn_cast<SelectInst>(I)) {
-    IR2VEC_DEBUG(std::cout << "\t\tSelect instr. Handling separately"
-                           << std::endl);
-    handleSelectInCollectLiveDefinitions(SI, memOperand, MSSA, AA, RD);
-    return;
-  }
-
   MemoryAccess *MA = MSSA.getMemoryAccess(I);
   if (!MA) {
-    IR2VEC_DEBUG(std::cout << "\t\tMemory access not found for instruction"
-                           << std::endl);
-
-    // Check if we can use MemoryPhi from the basic block for regular
-    // instructions This handles cases like 'ret' instructions at the end of
-    // blocks with multiple predecessors
-    BasicBlock *BB = I->getParent();
-    if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
-      IR2VEC_DEBUG(std::cout << "\t\t\tFallback - Found MemoryPhi for "
-                                "instruction's basic block, using it"
-                             << std::endl);
-      _impl_collectLiveDefinitions(MPhi, memOperand, AA, RD, I);
-      return;
-    }
-
-    // If no MemoryPhi available, fall back to adding operand directly
-    IR2VEC_DEBUG(std::cout << "\t\t\tNo MemoryPhi found, memAccess is Null. "
-                              "Adding operandInst directly"
-                           << std::endl);
-    RD.push_back(memOperand);
+    IR2VEC_DEBUG(
+        std::cout << "\t\tMemory access not found - using nullMAHandler"
+                  << std::endl);
+    nullMAHandler(I, memOperand, MSSA, AA, RD);
     return;
   }
 
