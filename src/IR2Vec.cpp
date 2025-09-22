@@ -562,12 +562,13 @@ void collectMemOps(Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
   collect(memOperand);
 }
 
-void nullMAHandler(Instruction *I, MemoryAccess *StartAccess, MemorySSA &MSSA,
-                   AAResults &AA) {
+void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
+                   AAResults &AA, SmallPtrSet<const Instruction *, 32> &RD) {
   IR2VEC_DEBUG(std::cout << "\t\tHandling instruction with null MemoryAccess: "
                          << printObject(I) << std::endl);
 
   BasicBlock *BB = I->getParent();
+  MemoryAccess *StartAccess = nullptr;
 
   // STEP 1: Look for the most recent MemoryDef BEFORE this instruction in the
   // same block
@@ -584,7 +585,7 @@ void nullMAHandler(Instruction *I, MemoryAccess *StartAccess, MemorySSA &MSSA,
 
         // Check if this MemoryDef comes BEFORE our instruction
         if (DefInst && DefInst->comesBefore(I)) {
-          StartAccess = std::move(const_cast<MemoryDef *>(MD));
+          StartAccess = const_cast<MemoryDef *>(MD);
           IR2VEC_DEBUG(std::cout
                        << "\t\t\t\tFound MemoryDef before instruction: "
                        << printObject(DefInst) << std::endl);
@@ -611,7 +612,7 @@ void nullMAHandler(Instruction *I, MemoryAccess *StartAccess, MemorySSA &MSSA,
         << std::endl);
 
     if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
-      StartAccess = std::move(MPhi);
+      StartAccess = MPhi;
       IR2VEC_DEBUG(std::cout
                    << "\t\t\t\tFound MemoryPhi for instruction's basic block"
                    << std::endl);
@@ -619,29 +620,17 @@ void nullMAHandler(Instruction *I, MemoryAccess *StartAccess, MemorySSA &MSSA,
   }
 
   if (!StartAccess) {
-    StartAccess = std::move(MSSA.getLiveOnEntryDef());
+    StartAccess = MSSA.getLiveOnEntryDef();
     IR2VEC_DEBUG(
         std::cout
         << "\t\t\tNo MemoryDef found, no memoryPhi, using live-on-entry"
         << std::endl);
   }
-  return;
-}
 
-void fetchStartAccess(Instruction *I, MemoryAccess *StartAccess,
-                      MemorySSA &MSSA, AAResults &AA) {
-  MemoryAccess *MA = MSSA.getMemoryAccess(I);
-  if (!MA) {
-    IR2VEC_DEBUG(
-        std::cout << "\t\tMemory access not found - using nullMAHandler"
-                  << std::endl);
-    nullMAHandler(I, StartAccess, MSSA, AA);
-    return;
-  }
-
-  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
-    StartAccess = std::move(MUOD->getDefiningAccess());
-  }
+  Instruction *memRoot = llvm::findAllocaForValue(memOperand);
+  if (!memRoot)
+    memRoot = std::move(memOperand);
+  startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I);
 }
 
 void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
@@ -657,18 +646,24 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
                          << "\n\t\tAnd memory operand Inst is "
                          << printObject(memOperand) << std::endl);
 
+  MemoryAccess *MA = MSSA.getMemoryAccess(I);
+  if (!MA) {
+    IR2VEC_DEBUG(
+        std::cout << "\t\tMemory access not found - using nullMAHandler"
+                  << std::endl);
+    nullMAHandler(I, memOperand, MSSA, AA, RD);
+    return;
+  }
+
   MemoryAccess *StartAccess = nullptr;
-  fetchStartAccess(I, StartAccess, MSSA, AA);
+  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
+    StartAccess = MUOD->getDefiningAccess();
+  }
 
-  // SmallPtrSet<const Instruction *, 32> MemOpSet;
-  // collectMemOps(memOperand, MSSA, AA, MemOpSet);
-
-  startCollectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
-
-  // get startAccess, get memoryOperand vector
-  // for (auto targetMemOpInst : MemOpSet)
-  //   startCollectLiveDefinitions(
-  //       StartAccess, const_cast<Instruction *>(targetMemOpInst), AA, RD, I);
+  Instruction *memRoot = llvm::findAllocaForValue(memOperand);
+  if (!memRoot)
+    memRoot = std::move(memOperand);
+  startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I);
 }
 
 void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
