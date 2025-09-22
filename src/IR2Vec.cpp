@@ -515,24 +515,59 @@ void startCollectLiveDefinitions(MemoryAccess *StartAccess,
   }
   IR2VEC_DEBUG(std::cout
                << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
-               << printObject(StartAccess) << " "
+               << printObject(StartAccess) << " and targetMemLocation "
                << printObject(targetMemLocation) << std::endl);
-
-  // TODO :: This only works if targetMemLocation is a memoryDef.
-  // Else we need to do an mXn check for memDefs of I, targetMemLocation
 
   // Walk MemorySSA chain to find all live definitions
   _impl_collectLiveDefinitions(StartAccess, targetMemLocation, AA, RD,
                                rootInst);
 }
 
-void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
-                   AAResults &AA, SmallPtrSet<const Instruction *, 32> &RD) {
+void collectMemOps(Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
+                   SmallPtrSet<const Instruction *, 32> &memOpSet) {
+
+  if (!memOperand)
+    return;
+
+  SmallPtrSet<const Value *, 32> Visited;
+
+  std::function<void(const Value *)> collect = [&](const Value *V) {
+    if (!V)
+      return;
+    if (!V->getType()->isPointerTy())
+      return;
+    if (!Visited.insert(V).second)
+      return; // already visited
+
+    // PHI: recurse on incoming values
+    if (auto *PN = dyn_cast<PHINode>(V)) {
+      for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
+        collect(PN->getIncomingValue(i));
+      return;
+    }
+
+    // select: recurse on both arms
+    if (auto *SI = dyn_cast<SelectInst>(V)) {
+      collect(SI->getTrueValue());
+      collect(SI->getFalseValue());
+      return;
+    }
+
+    // Otherwise, if it's an Instruction pointer-producing value, add it.
+    if (auto *I = dyn_cast<Instruction>(V)) {
+      memOpSet.insert(I);
+    }
+  };
+
+  collect(memOperand);
+}
+
+void nullMAHandler(Instruction *I, MemoryAccess *StartAccess, MemorySSA &MSSA,
+                   AAResults &AA) {
   IR2VEC_DEBUG(std::cout << "\t\tHandling instruction with null MemoryAccess: "
                          << printObject(I) << std::endl);
 
   BasicBlock *BB = I->getParent();
-  MemoryAccess *StartAccess = nullptr;
 
   // STEP 1: Look for the most recent MemoryDef BEFORE this instruction in the
   // same block
@@ -549,7 +584,7 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
 
         // Check if this MemoryDef comes BEFORE our instruction
         if (DefInst && DefInst->comesBefore(I)) {
-          StartAccess = const_cast<MemoryDef *>(MD);
+          StartAccess = std::move(const_cast<MemoryDef *>(MD));
           IR2VEC_DEBUG(std::cout
                        << "\t\t\t\tFound MemoryDef before instruction: "
                        << printObject(DefInst) << std::endl);
@@ -576,7 +611,7 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
         << std::endl);
 
     if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
-      StartAccess = MPhi;
+      StartAccess = std::move(MPhi);
       IR2VEC_DEBUG(std::cout
                    << "\t\t\t\tFound MemoryPhi for instruction's basic block"
                    << std::endl);
@@ -584,13 +619,29 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
   }
 
   if (!StartAccess) {
-    StartAccess = MSSA.getLiveOnEntryDef();
+    StartAccess = std::move(MSSA.getLiveOnEntryDef());
     IR2VEC_DEBUG(
         std::cout
         << "\t\t\tNo MemoryDef found, no memoryPhi, using live-on-entry"
         << std::endl);
   }
-  startCollectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
+  return;
+}
+
+void fetchStartAccess(Instruction *I, MemoryAccess *StartAccess,
+                      MemorySSA &MSSA, AAResults &AA) {
+  MemoryAccess *MA = MSSA.getMemoryAccess(I);
+  if (!MA) {
+    IR2VEC_DEBUG(
+        std::cout << "\t\tMemory access not found - using nullMAHandler"
+                  << std::endl);
+    nullMAHandler(I, StartAccess, MSSA, AA);
+    return;
+  }
+
+  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
+    StartAccess = std::move(MUOD->getDefiningAccess());
+  }
 }
 
 void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
@@ -606,21 +657,18 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
                          << "\n\t\tAnd memory operand Inst is "
                          << printObject(memOperand) << std::endl);
 
-  MemoryAccess *MA = MSSA.getMemoryAccess(I);
-  if (!MA) {
-    IR2VEC_DEBUG(
-        std::cout << "\t\tMemory access not found - using nullMAHandler"
-                  << std::endl);
-    nullMAHandler(I, memOperand, MSSA, AA, RD);
-    return;
-  }
-
   MemoryAccess *StartAccess = nullptr;
-  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
-    StartAccess = MUOD->getDefiningAccess();
-  }
+  fetchStartAccess(I, StartAccess, MSSA, AA);
+
+  // SmallPtrSet<const Instruction *, 32> MemOpSet;
+  // collectMemOps(memOperand, MSSA, AA, MemOpSet);
 
   startCollectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
+
+  // get startAccess, get memoryOperand vector
+  // for (auto targetMemOpInst : MemOpSet)
+  //   startCollectLiveDefinitions(
+  //       StartAccess, const_cast<Instruction *>(targetMemOpInst), AA, RD, I);
 }
 
 void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
