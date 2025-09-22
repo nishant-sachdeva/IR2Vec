@@ -399,7 +399,7 @@ bool accessesSameMemoryLocation(Instruction *srcInst, Instruction *targetMem,
 
 void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
                                   Instruction *targetMemLocation, AAResults &AA,
-                                  SmallVector<const Instruction *, 10> &RD,
+                                  SmallPtrSet<const Instruction *, 32> &RD,
                                   Instruction *rootInst) {
 
   SmallPtrSet<const Instruction *, 32> visitedList;
@@ -430,9 +430,9 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
       if (!defInst) {
         IR2VEC_DEBUG(std::cout << "\t\t\tdefInst is null" << std::endl);
         IR2VEC_DEBUG(std::cout << "\t\t\t Current memAccess reaching null. "
-                                  "Adding targetMem Inst to RD"
-                               << std::endl;);
-        RD.push_back(targetMemLocation);
+                                  "Adding targetMem Inst to RD "
+                               << printObject(targetMemLocation) << std::endl;);
+        RD.insert(targetMemLocation);
         continue;
       }
 
@@ -444,12 +444,24 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
       }
       visitedList.insert(defInst);
 
-      if (llvm::isa<llvm::CallInst>(defInst)) {
-        IR2VEC_DEBUG(std::cout
-                     << "\t\t\t\tSkip this instruction - it's a function call"
-                     << std::endl);
-        worklist.push_back(MD->getDefiningAccess());
-        continue;
+      if (auto *callInst = llvm::dyn_cast<llvm::CallInst>(defInst)) {
+        if (callInst->hasRetAttr(Attribute::NoAlias)) {
+          // This is an allocation function - check if it matches our target
+          if (accessesSameMemoryLocation(defInst, targetMemLocation, AA)) {
+            RD.insert(defInst);
+            continue;
+          }
+          IR2VEC_DEBUG(std::cout
+                       << "\t\t\t\tDid not get memory Alias - moving to next"
+                       << std::endl);
+          worklist.push_back(MD->getDefiningAccess());
+        } else {
+          IR2VEC_DEBUG(std::cout
+                       << "\t\t\t\tSkip this instruction - it's a function call"
+                       << std::endl);
+          worklist.push_back(MD->getDefiningAccess());
+          continue;
+        }
       }
 
       if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(defInst);
@@ -469,7 +481,7 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
         IR2VEC_DEBUG(std::cout
                      << "\t\t\t\tEstablished Alias Memory - adding Live RD"
                      << std::endl);
-        RD.push_back(defInst);
+        RD.insert(defInst);
         continue;
       }
       // Continue walking to find other live definitions
@@ -492,8 +504,30 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
   IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
 }
 
+void startCollectLiveDefinitions(MemoryAccess *StartAccess,
+                                 Instruction *targetMemLocation, AAResults &AA,
+                                 SmallPtrSet<const Instruction *, 32> &RD,
+                                 Instruction *rootInst) {
+
+  if (!StartAccess) {
+    IR2VEC_DEBUG(std::cout << "\t\tNo defining access found" << std::endl);
+    return;
+  }
+  IR2VEC_DEBUG(std::cout
+               << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
+               << printObject(StartAccess) << " "
+               << printObject(targetMemLocation) << std::endl);
+
+  // TODO :: This only works if targetMemLocation is a memoryDef.
+  // Else we need to do an mXn check for memDefs of I, targetMemLocation
+
+  // Walk MemorySSA chain to find all live definitions
+  _impl_collectLiveDefinitions(StartAccess, targetMemLocation, AA, RD,
+                               rootInst);
+}
+
 void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
-                   AAResults &AA, SmallVector<const Instruction *, 10> &RD) {
+                   AAResults &AA, SmallPtrSet<const Instruction *, 32> &RD) {
   IR2VEC_DEBUG(std::cout << "\t\tHandling instruction with null MemoryAccess: "
                          << printObject(I) << std::endl);
 
@@ -549,24 +583,19 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
     }
   }
 
-  // STEP 3: Proceed with normal MemorySSA analysis or fallback
-  if (StartAccess) {
+  if (!StartAccess) {
+    StartAccess = MSSA.getLiveOnEntryDef();
     IR2VEC_DEBUG(
         std::cout
-        << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
-        << printObject(StartAccess) << std::endl);
-    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
-  } else {
-    IR2VEC_DEBUG(
-        std::cout << "\t\t\tNo StartAccess found, adding memOperand directly"
-                  << std::endl);
-    RD.push_back(memOperand);
+        << "\t\t\tNo MemoryDef found, no memoryPhi, using live-on-entry"
+        << std::endl);
   }
+  startCollectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
 }
 
 void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
                             MemorySSA &MSSA, AAResults &AA,
-                            SmallVector<const Instruction *, 10> &RD) {
+                            SmallPtrSet<const Instruction *, 32> &RD) {
   if (!memOperand) {
     IR2VEC_DEBUG(std::cout << "\t\tMemory operand not found" << std::endl);
     return;
@@ -591,18 +620,12 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
     StartAccess = MUOD->getDefiningAccess();
   }
 
-  if (!StartAccess) {
-    IR2VEC_DEBUG(std::cout << "\t\tNo defining access found" << std::endl);
-    return;
-  }
-
-  // Walk MemorySSA chain to find all live definitions
-  _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
+  startCollectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
 }
 
 void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
                                   AAResults &AA,
-                                  SmallVector<const Instruction *, 10> *RD) {
+                                  SmallPtrSet<const Instruction *, 32> *RD) {
   RD->clear();
   IR2VEC_DEBUG(std::cout << "\n\nStudying Inst " << printObject(I)
                          << std::endl);
@@ -621,7 +644,7 @@ void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
         // SSA)
         IR2VEC_DEBUG(std::cout << "\t Adding RD : Operand Instruction "
                                << printObject(operandInst) << std::endl);
-        RD->push_back(operandInst);
+        RD->insert(operandInst);
       } else {
         IR2VEC_DEBUG(std::cout << "\tOperand is pointer "
                                << printObject(operand) << " studying further"
@@ -648,21 +671,26 @@ bool rejectInstCases(Instruction *I) {
   return false;
 }
 
-void collectSSAReachingDefs(FunctionAnalysisManager &FAM, Module &M,
+void collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA, AAResults &AA,
                             MapTy &resultMap) {
+  llvm::SmallPtrSet<const Instruction *, 32> RD;
+  _impl_collectSSAReachingDefs(I, MSSA, AA, &RD);
+  if (!rejectInstCases(I)) {
+    resultMap[I].assign(RD.begin(), RD.end());
+  }
+}
+
+void collectSSAReachingDefs_wrapper(FunctionAnalysisManager &FAM, Module &M,
+                                    MapTy &resultMap) {
   // Run the pass on each function in the module
   for (Function &F : M) {
     if (!F.isDeclaration()) {
       MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
-
       // AAManager::Result models AAResults
       AAResults &AA = FAM.getResult<AAManager>(F);
       for (auto &BB : F) {
         for (Instruction &inst : BB) {
-          llvm::SmallVector<const llvm::Instruction *, 10> RD;
-          _impl_collectSSAReachingDefs(&inst, MSSA, AA, &RD);
-          if (!rejectInstCases(&inst))
-            resultMap[&inst] = RD;
+          collectSSAReachingDefs(&inst, MSSA, AA, resultMap);
         }
       }
     }
@@ -708,10 +736,10 @@ void checkMemssaFunctions(llvm::Module &M, MapTy &resultMap) {
   else if (IR2Vec::test_reachingDefs) {
     if (IR2Vec::printTime) {
       IR2Vec::timeFunction("SSA ReachingDefs map", [&]() {
-        collectSSAReachingDefs(FAM, M, resultMap);
+        collectSSAReachingDefs_wrapper(FAM, M, resultMap);
       });
     } else
-      collectSSAReachingDefs(FAM, M, resultMap);
+      collectSSAReachingDefs_wrapper(FAM, M, resultMap);
   }
 }
 
