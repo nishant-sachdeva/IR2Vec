@@ -275,6 +275,10 @@ static inline const Instruction *underlyingInst(const Instruction *I) {
   if (!Ptr)
     return nullptr;
 
+  if (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr)) {
+    return GEP;
+  }
+
   // Get the deepest object in the pointer chain
   const Value *UnderlyingObj = llvm::getUnderlyingObject(Ptr);
 
@@ -283,26 +287,20 @@ static inline const Instruction *underlyingInst(const Instruction *I) {
     return BaseInst;
   }
 
-  // Corner case: if getUnderlyingObject stopped at a non-instruction,
-  // but the original pointer was a GEP, check the GEP's base pointer
-  if (const GetElementPtrInst *GEP = dyn_cast<GetElementPtrInst>(Ptr)) {
-    const Value *GEPBase = GEP->getPointerOperand();
-    if (const Instruction *GEPBaseInst = dyn_cast<Instruction>(GEPBase)) {
-      return GEPBaseInst;
-    }
-  }
-
   // Otherwise, if the original pointer was an instruction, use that
   return dyn_cast<Instruction>(Ptr);
 }
 
 static inline const Instruction *baseInstOf(const Instruction *I) {
+  if (isa<GetElementPtrInst>(I))
+    return I;
+
   const Instruction *Base = underlyingInst(I);
 
   // Keep going deeper only if we can actually go deeper
   while (Base && Base->mayReadOrWriteMemory()) {
     const Instruction *NextBase = underlyingInst(Base);
-    if (!NextBase) {
+    if (!NextBase || isa<GetElementPtrInst>(NextBase)) {
       // Can't go deeper, stop here
       break;
     }
@@ -377,24 +375,30 @@ void collectSSAWriteDefsMap(FunctionAnalysisManager &FAM, Module &M,
   }
 }
 
-bool accessesSameMemoryLocation(Instruction *srcInst, Value *targetMem,
+bool accessesSameMemoryLocation(Instruction *srcInst, Instruction *targetMem,
                                 AAResults &AA) {
   if (!targetMem || !srcInst) // || !srcInst->mayWriteToMemory())
     return false;
 
   const Instruction *defInst = baseInstOf(srcInst);
-  if (!defInst) defInst = srcInst;
+  if (!defInst)
+    defInst = srcInst;
 
-  targetMem = llvm::getUnderlyingObject(targetMem);
+  const Instruction *targetInst = baseInstOf(targetMem);
+  if (!targetInst)
+    targetInst = targetMem;
 
-  IR2VEC_DEBUG(std::cout << "\t\t\tSrc Inst " << printObject(srcInst) << " Base Inst " << printObject(defInst)
-                      << std::endl);
-  IR2VEC_DEBUG(std::cout << "\t\t\tChecking Alias with targetMem " << printObject(targetMem) << std::endl);
-  return !AA.isNoAlias(defInst, targetMem);
+  IR2VEC_DEBUG(std::cout << "\t\t\tSrc Inst " << printObject(srcInst)
+                         << " Base Inst " << printObject(defInst) << std::endl);
+  IR2VEC_DEBUG(std::cout << "\t\t\ttargetMemLocation " << printObject(targetMem)
+                         << " Base targetInst " << printObject(targetInst)
+                         << std::endl);
+  // return !AA.isNoAlias(defInst, targetInst);
+  return AA.isMustAlias(defInst, targetInst);
 }
 
 void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
-                                  Value *targetMemLocation, AAResults &AA,
+                                  Instruction *targetMemLocation, AAResults &AA,
                                   SmallVector<const Instruction *, 10> &RD,
                                   Instruction *rootInst) {
 
@@ -404,6 +408,7 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
   worklist.push_back(DefAccess);
   visitedList.insert(rootInst);
 
+  // TODO : This is a heuristic
   int recurseMax = 100;
 
   while (!worklist.empty() && recurseMax > 0) {
@@ -421,14 +426,13 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
 
     if (auto *MD = dyn_cast<MemoryDef>(current)) {
       Instruction *defInst = MD->getMemoryInst();
+
       if (!defInst) {
         IR2VEC_DEBUG(std::cout << "\t\t\tdefInst is null" << std::endl);
-        if (auto *rootInst = dyn_cast<Instruction>(targetMemLocation)) {
-          IR2VEC_DEBUG(std::cout << "\t\t\t Current memAccess reaching null. "
-                                    "target mem is Inst. Adding to RD"
-                                 << std::endl;);
-          RD.push_back(rootInst);
-        }
+        IR2VEC_DEBUG(std::cout << "\t\t\t Current memAccess reaching null. "
+                                  "Adding targetMem Inst to RD"
+                               << std::endl;);
+        RD.push_back(targetMemLocation);
         continue;
       }
 
@@ -448,10 +452,12 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
         continue;
       }
 
-      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(defInst); LI && LI->isVolatile()) {
-        IR2VEC_DEBUG(std::cout
-                     << "\t\t\t\tSkip this instruction - it's a volatile load"
-                     << std::endl);
+      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(defInst);
+          LI && (LI->isVolatile() || LI->isAtomic())) {
+        IR2VEC_DEBUG(
+            std::cout
+            << "\t\t\t\tSkip this instruction - it's a volatile/Atomic load"
+            << std::endl);
         worklist.push_back(MD->getDefiningAccess());
         continue;
       }
@@ -486,45 +492,172 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
   IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
 }
 
-void collectLiveDefinitions(Instruction *I, Value *memOperand, MemorySSA &MSSA,
-                            AAResults &AA,
+void handlePhiInCollectLiveDefinitions(
+    PHINode *PHI, Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
+    SmallVector<const Instruction *, 10> &RD) {
+  IR2VEC_DEBUG(
+      std::cout << "\t\tHandling PHI instruction in collectLiveDefinitions: "
+                << printObject(PHI) << std::endl);
+
+  BasicBlock *BB = PHI->getParent();
+  MemoryAccess *StartAccess = nullptr;
+
+  // Look for MemoryPhi in this block
+  if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
+    StartAccess = MPhi;
+    IR2VEC_DEBUG(std::cout << "\t\t\tFound MemoryPhi for PHI's basic block"
+                           << std::endl);
+  } else {
+    // No MemoryPhi, use live-on-entry
+    StartAccess = MSSA.getLiveOnEntryDef();
+    IR2VEC_DEBUG(std::cout << "\t\t\tNo MemoryPhi found, using live-on-entry"
+                           << std::endl);
+  }
+
+  if (StartAccess) {
+    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, PHI);
+  } else {
+    IR2VEC_DEBUG(
+        std::cout
+        << "\t\t\tNo StartAccess found for PHI, adding memOperand directly"
+        << std::endl);
+    RD.push_back(memOperand);
+  }
+}
+
+void handleSelectInCollectLiveDefinitions(
+    SelectInst *SI, Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
+    SmallVector<const Instruction *, 10> &RD) {
+  IR2VEC_DEBUG(
+      std::cout << "\t\tHandling Select instruction in collectLiveDefinitions: "
+                << printObject(SI) << std::endl);
+
+  BasicBlock *BB = SI->getParent();
+  MemoryAccess *StartAccess = nullptr;
+
+  // STEP 1: Look for the most recent MemoryDef BEFORE this select in the same
+  // block This is crucial because select can appear anywhere in a basic block
+  auto *BlockAccesses = MSSA.getBlockAccesses(BB);
+  if (BlockAccesses) {
+    IR2VEC_DEBUG(
+        std::cout << "\t\t\tSearching for MemoryDef before Select in same block"
+                  << std::endl);
+
+    for (auto &Access : *BlockAccesses) {
+      if (auto *MD = dyn_cast<MemoryDef>(&Access)) {
+        Instruction *DefInst = MD->getMemoryInst();
+
+        // Check if this MemoryDef comes BEFORE our select instruction
+        if (DefInst && DefInst->comesBefore(SI)) {
+          StartAccess = const_cast<MemoryDef *>(MD);
+          IR2VEC_DEBUG(std::cout << "\t\t\t\tFound MemoryDef before Select: "
+                                 << printObject(DefInst) << std::endl);
+          // Continue further - we want the MOST RECENT one before the select
+          continue;
+        }
+        IR2VEC_DEBUG(
+            std::cout
+            << "\t\t\t\tReached MemoryDef after Select, stopping search"
+            << std::endl);
+      }
+    }
+  }
+
+  // STEP 2: If no MemoryDef found before select, check for MemoryPhi at block
+  // start
+  if (!StartAccess) {
+    IR2VEC_DEBUG(
+        std::cout << "\t\t\tNo MemoryDef before Select, checking for MemoryPhi"
+                  << std::endl);
+
+    if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
+      StartAccess = MPhi;
+      IR2VEC_DEBUG(std::cout
+                   << "\t\t\t\tFound MemoryPhi for Select's basic block"
+                   << std::endl);
+    }
+  }
+
+  // STEP 3: Proceed with normal MemorySSA analysis
+  if (StartAccess) {
+    IR2VEC_DEBUG(
+        std::cout
+        << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
+        << printObject(StartAccess) << std::endl);
+    _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, SI);
+  } else {
+    IR2VEC_DEBUG(
+        std::cout
+        << "\t\t\tNo StartAccess found for Select, adding memOperand directly"
+        << std::endl);
+    RD.push_back(memOperand);
+  }
+}
+
+void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
+                            MemorySSA &MSSA, AAResults &AA,
                             SmallVector<const Instruction *, 10> &RD) {
-  // Get the memory operand for this instruction
-  // Value *memOperand = getMemoryOperand(I);
   if (!memOperand) {
     IR2VEC_DEBUG(std::cout << "\t\tMemory operand not found" << std::endl);
     return;
   }
 
   IR2VEC_DEBUG(std::cout << "\t\tGetting Live memory definitions for Inst "
-                         << printObject(I) << "\n\t\tAnd memory operand is "
+                         << printObject(I)
+                         << "\n\t\tAnd memory operand Inst is "
                          << printObject(memOperand) << std::endl);
+
+  if (auto *PHI = dyn_cast<PHINode>(I)) {
+    IR2VEC_DEBUG(std::cout << "\t\tPhi instr. Handling separately"
+                           << std::endl);
+    handlePhiInCollectLiveDefinitions(PHI, memOperand, MSSA, AA, RD);
+    return;
+  }
+
+  if (auto *SI = dyn_cast<SelectInst>(I)) {
+    IR2VEC_DEBUG(std::cout << "\t\tSelect instr. Handling separately"
+                           << std::endl);
+    handleSelectInCollectLiveDefinitions(SI, memOperand, MSSA, AA, RD);
+    return;
+  }
 
   MemoryAccess *MA = MSSA.getMemoryAccess(I);
   if (!MA) {
-    IR2VEC_DEBUG(std::cout << "\t\tMemory access not found" << std::endl);
-    if (isa<Instruction>(memOperand)) {
-      IR2VEC_DEBUG(
-          std::cout
-          << "\t\t memAccess is Null, but memOperand is Instr Inst. Adding"
-          << std::endl);
-      RD.push_back(dyn_cast<Instruction>(memOperand));
+    IR2VEC_DEBUG(std::cout << "\t\tMemory access not found for instruction"
+                           << std::endl);
+
+    // Check if we can use MemoryPhi from the basic block for regular
+    // instructions This handles cases like 'ret' instructions at the end of
+    // blocks with multiple predecessors
+    BasicBlock *BB = I->getParent();
+    if (MemoryPhi *MPhi = MSSA.getMemoryAccess(BB)) {
+      IR2VEC_DEBUG(std::cout << "\t\t\tFallback - Found MemoryPhi for "
+                                "instruction's basic block, using it"
+                             << std::endl);
+      _impl_collectLiveDefinitions(MPhi, memOperand, AA, RD, I);
+      return;
     }
+
+    // If no MemoryPhi available, fall back to adding operand directly
+    IR2VEC_DEBUG(std::cout << "\t\t\tNo MemoryPhi found, memAccess is Null. "
+                              "Adding operandInst directly"
+                           << std::endl);
+    RD.push_back(memOperand);
     return;
   }
 
-  MemoryAccess *DefiningAccess = nullptr;
-  if (auto *MU = dyn_cast<MemoryUse>(MA)) {
-    DefiningAccess = MU->getDefiningAccess();
-  } else if (auto *MD = dyn_cast<MemoryDef>(MA)) {
-    DefiningAccess = MD->getDefiningAccess();
+  MemoryAccess *StartAccess = nullptr;
+  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
+    StartAccess = MUOD->getDefiningAccess();
   }
 
-  if (!DefiningAccess)
+  if (!StartAccess) {
+    IR2VEC_DEBUG(std::cout << "\t\tNo defining access found" << std::endl);
     return;
+  }
 
   // Walk MemorySSA chain to find all live definitions
-  _impl_collectLiveDefinitions(DefiningAccess, memOperand, AA, RD, I);
+  _impl_collectLiveDefinitions(StartAccess, memOperand, AA, RD, I);
 }
 
 void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
@@ -553,7 +686,7 @@ void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
         IR2VEC_DEBUG(std::cout << "\tOperand is pointer "
                                << printObject(operand) << " studying further"
                                << std::endl);
-        collectLiveDefinitions(I, operand, MSSA, AA, *RD);
+        collectLiveDefinitions(I, operandInst, MSSA, AA, *RD);
       }
     } else if (isa<Constant>(operand)) {
       IR2VEC_DEBUG(std::cout << "\tConstant value , skipping "
@@ -732,7 +865,7 @@ void test_reachingdefs() {
   // auto oldReachingDefs = generateFAEncodings();
   IR2VEC_DEBUG(std::cout << "Both Reaching Defs Ready, starting comparison"
                          << std::endl);
-  compareMapsSimple(oldReachingDefs, newReachingDefs);
+  IR2VEC_DEBUG(compareMapsSimple(oldReachingDefs, newReachingDefs));
   bool same = writeDefsMapEqualByText(oldReachingDefs, newReachingDefs);
   std::cout << "Both maps are Same ? - " << same << std::endl;
   // }
