@@ -393,7 +393,6 @@ bool accessesSameMemoryLocation(Instruction *srcInst, Instruction *targetMem,
   IR2VEC_DEBUG(std::cout << "\t\t\ttargetMemLocation " << printObject(targetMem)
                          << " Base targetInst " << printObject(targetInst)
                          << std::endl);
-  // return !AA.isNoAlias(defInst, targetInst);
   return AA.isMustAlias(defInst, targetInst);
 }
 
@@ -513,6 +512,11 @@ void startCollectLiveDefinitions(MemoryAccess *StartAccess,
     IR2VEC_DEBUG(std::cout << "\t\tNo defining access found" << std::endl);
     return;
   }
+
+  if (!targetMemLocation) {
+    IR2VEC_DEBUG(std::cout << "\t\tNo target mem Location found" << std::endl);
+    return;
+  }
   IR2VEC_DEBUG(std::cout
                << "\t\t\tProceeding with MemorySSA analysis using StartAccess: "
                << printObject(StartAccess) << " and targetMemLocation "
@@ -562,10 +566,19 @@ void collectMemOps(Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
   collect(memOperand);
 }
 
-void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
-                   AAResults &AA, SmallPtrSet<const Instruction *, 32> &RD) {
-  IR2VEC_DEBUG(std::cout << "\t\tHandling instruction with null MemoryAccess: "
-                         << printObject(I) << std::endl);
+MemoryAccess *getStartAccess(Instruction *I, Instruction *memOperand,
+                             MemorySSA &MSSA) {
+  MemoryAccess *MA = MSSA.getMemoryAccess(I);
+  if (MA) {
+    // Normal case: MemoryAccess exists
+    if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
+      return MUOD->getDefiningAccess();
+    }
+  }
+
+  IR2VEC_DEBUG(
+      std::cout << "\t\tMemory access not found - handling null MemoryAccess"
+                << std::endl);
 
   BasicBlock *BB = I->getParent();
   MemoryAccess *StartAccess = nullptr;
@@ -574,10 +587,9 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
   // same block
   auto *BlockAccesses = MSSA.getBlockAccesses(BB);
   if (BlockAccesses) {
-    IR2VEC_DEBUG(
-        std::cout
-        << "\t\t\tSearching for MemoryDef before instruction in same block"
-        << std::endl);
+    IR2VEC_DEBUG(std::cout << "\t\t\tSearching for earliest MemoryDef "
+                              "predecessor instruction in same BB"
+                           << std::endl);
 
     for (auto &Access : *BlockAccesses) {
       if (auto *MD = dyn_cast<MemoryDef>(&Access)) {
@@ -627,10 +639,20 @@ void nullMAHandler(Instruction *I, Instruction *memOperand, MemorySSA &MSSA,
         << std::endl);
   }
 
+  return StartAccess;
+}
+
+Instruction *getMemoryRoot(Instruction *memOperand) {
+  if (!memOperand) {
+    return nullptr;
+  }
+
   Instruction *memRoot = llvm::findAllocaForValue(memOperand);
-  if (!memRoot)
-    memRoot = std::move(memOperand);
-  startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I);
+  if (!memRoot) {
+    memRoot = memOperand;
+  }
+
+  return memRoot;
 }
 
 void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
@@ -641,28 +663,17 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
     return;
   }
 
+  MemoryAccess *StartAccess = getStartAccess(I, memOperand, MSSA);
+  Instruction *memRoot = getMemoryRoot(memOperand);
+
+  IR2VEC_DEBUG(std::cout << "\t\t MemRoot for " << printObject(memOperand)
+                         << " - " << printObject(memRoot) << std::endl);
+
   IR2VEC_DEBUG(std::cout << "\t\tGetting Live memory definitions for Inst "
                          << printObject(I)
                          << "\n\t\tAnd memory operand Inst is "
-                         << printObject(memOperand) << std::endl);
+                         << printObject(memRoot) << std::endl);
 
-  MemoryAccess *MA = MSSA.getMemoryAccess(I);
-  if (!MA) {
-    IR2VEC_DEBUG(
-        std::cout << "\t\tMemory access not found - using nullMAHandler"
-                  << std::endl);
-    nullMAHandler(I, memOperand, MSSA, AA, RD);
-    return;
-  }
-
-  MemoryAccess *StartAccess = nullptr;
-  if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
-    StartAccess = MUOD->getDefiningAccess();
-  }
-
-  Instruction *memRoot = llvm::findAllocaForValue(memOperand);
-  if (!memRoot)
-    memRoot = std::move(memOperand);
   startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I);
 }
 
