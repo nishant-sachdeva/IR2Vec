@@ -388,12 +388,15 @@ bool accessesSameMemoryLocation(Instruction *srcInst, Instruction *targetMem,
   if (!targetInst)
     targetInst = targetMem;
 
-  IR2VEC_DEBUG(std::cout << "\t\t\tSrc Inst " << printObject(srcInst)
-                         << " Base Inst " << printObject(defInst) << std::endl);
-  IR2VEC_DEBUG(std::cout << "\t\t\ttargetMemLocation " << printObject(targetMem)
-                         << " Base targetInst " << printObject(targetInst)
-                         << std::endl);
+  // IR2VEC_DEBUG(std::cout << "\t\t\tSrc Inst " << printObject(srcInst)
+  //                        << " Base Inst " << printObject(defInst) <<
+  //                        std::endl);
+  // IR2VEC_DEBUG(std::cout << "\t\t\ttargetMemLocation " <<
+  // printObject(targetMem)
+  //                        << " Base targetInst " << printObject(targetInst)
+  //                        << std::endl);
   return AA.isMustAlias(defInst, targetInst);
+  // return !AA.isNoAlias(defInst, targetInst);
 }
 
 void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
@@ -503,13 +506,171 @@ void _impl_collectLiveDefinitions(MemoryAccess *DefAccess,
   IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
 }
 
+void _impl_collectLiveDefinitions_Walker(
+    MemoryAccess *DefAccess, Instruction *targetMemLocation, AAResults &AA,
+    SmallPtrSet<const Instruction *, 32> &RD, Instruction *rootInst,
+    MemorySSA &MSSA) {
+
+  SmallPtrSet<MemoryAccess *, 32> visitedList;
+  SmallVector<MemoryAccess *, 8> worklist;
+  MemorySSAWalker *Walker = MSSA.getWalker();
+  // MemoryLocation OperandLoc =
+  // MemoryLocation().getWithNewPtr(targetMemLocation);
+  MemoryLocation OperandLoc =
+      MemoryLocation(targetMemLocation, LocationSize::precise(1));
+  // MemoryLocation OperandLoc(
+  //   targetMemLocation,
+  //   LocationSize::precise(
+  //     (targetMemLocation->getModule()->getDataLayout())
+  //     .getTypeStoreSize(targetMemLocation->getType())
+  //   )
+  // );
+
+  IR2VEC_DEBUG(std::cout << "Memory Location Operand loc found is "
+                         << printObject(&OperandLoc) << std::endl);
+  // default Definition sets - LocationSize::beforeOrAfterPointer());
+
+  IR2VEC_DEBUG(std::cout << "\tSanity Check Live on Entry "
+                         << printObject(MSSA.getLiveOnEntryDef()) << std::endl);
+
+  worklist.push_back(DefAccess);
+  // visitedList.insert(DefAccess);
+
+  // TODO : This is a heuristic
+  int recurseMax = 100;
+
+  while (!worklist.empty() && recurseMax > 0) {
+    recurseMax--;
+    IR2VEC_DEBUG(std::cout << "\t\tEntered worklist loop" << std::endl);
+    MemoryAccess *current = worklist.pop_back_val();
+
+    if (!current) {
+      IR2VEC_DEBUG(std::cout << "\t\tCurrent memAccess is NULL - SKIPPING"
+                             << std::endl);
+      continue;
+    }
+
+    IR2VEC_DEBUG(std::cout << "\t\tChecking MemAccess " << printObject(current)
+                           << std::endl);
+
+    MemoryAccess *ClobberingAccess =
+        Walker->getClobberingMemoryAccess(current, OperandLoc);
+
+    if (visitedList.count(ClobberingAccess) > 0) {
+      IR2VEC_DEBUG(std::cout << "\t\t\tInsertion Failed. ClobberingAccess "
+                                "already visited. Skipping"
+                             << std::endl);
+      continue;
+    }
+    visitedList.insert(ClobberingAccess);
+
+    IR2VEC_DEBUG(std::cout << "\t\tChecking ClobberingAccess "
+                           << printObject(ClobberingAccess) << std::endl);
+
+    if (auto *MD = dyn_cast<MemoryDef>(ClobberingAccess)) {
+      IR2VEC_DEBUG(std::cout << "\t\tChecking MD " << printObject(MD)
+                             << std::endl);
+
+      if (MSSA.isLiveOnEntryDef(MD)) {
+        IR2VEC_DEBUG(std::cout << "\t\t\t Current memAccess is Live On Def "
+                                  "Adding targetMem Inst to RD "
+                               << printObject(targetMemLocation) << std::endl;);
+        RD.insert(targetMemLocation);
+        continue;
+      }
+
+      Instruction *defInst = MD->getMemoryInst();
+
+      if (!defInst) {
+        IR2VEC_DEBUG(std::cout
+                         << "\t\t\t Current memAccess-defInst reaching null. "
+                            "Adding targetMem Inst to RD "
+                         << printObject(targetMemLocation) << std::endl;);
+        RD.insert(targetMemLocation);
+        continue;
+      }
+
+      if (auto *callInst = llvm::dyn_cast<llvm::CallInst>(defInst)) {
+        if (callInst->getCalledFunction()->isIntrinsic()) {
+          IR2VEC_DEBUG(std::cout << "\t\t\t\t Internal Library Call"
+                                 << std::endl);
+          worklist.push_back(MD->getDefiningAccess());
+        } else {
+          IR2VEC_DEBUG(std::cout
+                       << "\t\t\t\tSkip this instruction - it's a function call"
+                       << std::endl);
+          worklist.push_back(MD->getDefiningAccess());
+          continue;
+        }
+      }
+
+      if (auto *LI = llvm::dyn_cast<llvm::LoadInst>(defInst);
+          LI && (LI->isVolatile() || LI->isAtomic())) {
+        IR2VEC_DEBUG(std::cout << "\t\t\tgetClobberingAccess() terminated at a "
+                                  "volatile/Atomic load. Search Further"
+                               << std::endl);
+        worklist.push_back(MD->getDefiningAccess());
+        continue;
+      }
+
+      if (defInst == rootInst) {
+        IR2VEC_DEBUG(std::cout << "Loop Circle - Don't add rootInst"
+                               << std::endl);
+        continue;
+      }
+
+      IR2VEC_DEBUG(std::cout << "\t\t\tAdding MemDef Live Clobbering RD "
+                             << printObject(defInst) << std::endl);
+
+      IR2VEC_DEBUG(std::cout
+                   << "\t\t\t\tFor the Record. Current Alias Function - Gives "
+                   << std::string(accessesSameMemoryLocation(
+                                      defInst, targetMemLocation, AA)
+                                      ? "True"
+                                      : "False")
+                   << std::endl);
+
+      RD.insert(defInst);
+    } else if (auto *MP = dyn_cast<MemoryPhi>(ClobberingAccess)) {
+      IR2VEC_DEBUG(std::cout << "\t\tEntered memoryPhi" << std::endl);
+      // Phi merges multiple live definitions
+      for (unsigned i = 0; i < MP->getNumIncomingValues(); ++i) {
+        auto childMP = MP->getIncomingValue(i);
+        IR2VEC_DEBUG(std::cout << "\t\t\tLogging Child memoryPhi "
+                               << printObject(childMP) << std::endl);
+        worklist.push_back(childMP);
+      }
+    } else {
+      IR2VEC_DEBUG(std::cout
+                   << "\t\tnot memory def, and not memoryPhi. Potential Error"
+                   << std::endl);
+    }
+  }
+  IR2VEC_DEBUG(std::cout << "Worklist Empty - Exiting" << std::endl);
+}
+
+Instruction *getMemoryRoot(Instruction *memOperand) {
+  if (!memOperand) {
+    return nullptr;
+  }
+
+  Instruction *memRoot = llvm::findAllocaForValue(memOperand);
+  if (!memRoot) {
+    memRoot = memOperand;
+  }
+
+  return memRoot;
+}
+
 void startCollectLiveDefinitions(MemoryAccess *StartAccess,
                                  Instruction *targetMemLocation, AAResults &AA,
                                  SmallPtrSet<const Instruction *, 32> &RD,
-                                 Instruction *rootInst) {
+                                 Instruction *rootInst, MemorySSA &MSSA) {
 
   if (!StartAccess) {
-    IR2VEC_DEBUG(std::cout << "\t\tNo defining access found" << std::endl);
+    IR2VEC_DEBUG(std::cout << "\t\tNo defining access found. Insert RD and back"
+                           << std::endl);
+    RD.insert(getMemoryRoot(targetMemLocation));
     return;
   }
 
@@ -523,64 +684,31 @@ void startCollectLiveDefinitions(MemoryAccess *StartAccess,
                << printObject(targetMemLocation) << std::endl);
 
   // Walk MemorySSA chain to find all live definitions
-  _impl_collectLiveDefinitions(StartAccess, targetMemLocation, AA, RD,
-                               rootInst);
-}
+  // _impl_collectLiveDefinitions(StartAccess, targetMemLocation, AA, RD,
+  //                              rootInst);
 
-void collectMemOps(Instruction *memOperand, MemorySSA &MSSA, AAResults &AA,
-                   SmallPtrSet<const Instruction *, 32> &memOpSet) {
-
-  if (!memOperand)
-    return;
-
-  SmallPtrSet<const Value *, 32> Visited;
-
-  std::function<void(const Value *)> collect = [&](const Value *V) {
-    if (!V)
-      return;
-    if (!V->getType()->isPointerTy())
-      return;
-    if (!Visited.insert(V).second)
-      return; // already visited
-
-    // PHI: recurse on incoming values
-    if (auto *PN = dyn_cast<PHINode>(V)) {
-      for (unsigned i = 0, e = PN->getNumIncomingValues(); i != e; ++i)
-        collect(PN->getIncomingValue(i));
-      return;
-    }
-
-    // select: recurse on both arms
-    if (auto *SI = dyn_cast<SelectInst>(V)) {
-      collect(SI->getTrueValue());
-      collect(SI->getFalseValue());
-      return;
-    }
-
-    // Otherwise, if it's an Instruction pointer-producing value, add it.
-    if (auto *I = dyn_cast<Instruction>(V)) {
-      memOpSet.insert(I);
-    }
-  };
-
-  collect(memOperand);
+  _impl_collectLiveDefinitions_Walker(StartAccess, targetMemLocation, AA, RD,
+                                      rootInst, MSSA);
 }
 
 MemoryAccess *getStartAccess(Instruction *I, Instruction *memOperand,
                              MemorySSA &MSSA) {
   MemoryAccess *MA = MSSA.getMemoryAccess(I);
   if (MA) {
-    // Normal case: MemoryAccess exists
+    IR2VEC_DEBUG(std::cout << "\t\tNormal case: MemoryAccess exists"
+                           << std::endl);
     if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
       return MUOD->getDefiningAccess();
     }
   }
 
   IR2VEC_DEBUG(
-      std::cout << "\t\tMemory access not found - handling null MemoryAccess"
+      std::cout << "\t\tMemory access not found - returning BB MemoryAccess"
                 << std::endl);
 
   BasicBlock *BB = I->getParent();
+  // return MSSA.getMemoryAccess(BB);
+  // }
   MemoryAccess *StartAccess = nullptr;
 
   // STEP 1: Look for the most recent MemoryDef BEFORE this instruction in the
@@ -631,28 +759,7 @@ MemoryAccess *getStartAccess(Instruction *I, Instruction *memOperand,
     }
   }
 
-  if (!StartAccess) {
-    StartAccess = MSSA.getLiveOnEntryDef();
-    IR2VEC_DEBUG(
-        std::cout
-        << "\t\t\tNo MemoryDef found, no memoryPhi, using live-on-entry"
-        << std::endl);
-  }
-
   return StartAccess;
-}
-
-Instruction *getMemoryRoot(Instruction *memOperand) {
-  if (!memOperand) {
-    return nullptr;
-  }
-
-  Instruction *memRoot = llvm::findAllocaForValue(memOperand);
-  if (!memRoot) {
-    memRoot = memOperand;
-  }
-
-  return memRoot;
 }
 
 void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
@@ -664,7 +771,8 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
   }
 
   MemoryAccess *StartAccess = getStartAccess(I, memOperand, MSSA);
-  Instruction *memRoot = getMemoryRoot(memOperand);
+  // Instruction *memRoot = getMemoryRoot(memOperand);
+  Instruction *memRoot = memOperand;
 
   IR2VEC_DEBUG(std::cout << "\t\t MemRoot for " << printObject(memOperand)
                          << " - " << printObject(memRoot) << std::endl);
@@ -674,7 +782,7 @@ void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
                          << "\n\t\tAnd memory operand Inst is "
                          << printObject(memRoot) << std::endl);
 
-  startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I);
+  startCollectLiveDefinitions(StartAccess, memRoot, AA, RD, I, MSSA);
 }
 
 void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
@@ -694,10 +802,8 @@ void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
 
     if (auto *operandInst = dyn_cast<Instruction>(operand)) {
       if (!operand->getType()->isPointerTy()) {
-        // SSA Case: The operand instruction IS the definition (single def in
-        // SSA)
-        IR2VEC_DEBUG(std::cout << "\t Adding RD : Operand Instruction "
-                               << printObject(operandInst) << std::endl);
+        IR2VEC_DEBUG(std::cout << "\tSSA Operand. Direct Insert "
+                               << printObject(operand) << std::endl);
         RD->insert(operandInst);
       } else {
         IR2VEC_DEBUG(std::cout << "\tOperand is pointer "
@@ -739,9 +845,11 @@ void collectSSAReachingDefs_wrapper(FunctionAnalysisManager &FAM, Module &M,
   // Run the pass on each function in the module
   for (Function &F : M) {
     if (!F.isDeclaration()) {
+      auto &AA = FAM.getResult<AAManager>(F);
       MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+      MSSA.ensureOptimizedUses();
+
       // AAManager::Result models AAResults
-      AAResults &AA = FAM.getResult<AAManager>(F);
       for (auto &BB : F) {
         for (Instruction &inst : BB) {
           collectSSAReachingDefs(&inst, MSSA, AA, resultMap);
@@ -771,12 +879,12 @@ void checkMemssaFunctions(llvm::Module &M, MapTy &resultMap) {
 
   PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
 
-  // Register required alias analyses and memory dependence analysis
-  FAM.registerPass([] { return MemorySSAAnalysis(); });
-  FAM.registerPass([] { return TargetLibraryAnalysis(); });
-
   // Install a proper AA stack (BasicAA + CFLAA + ScopedNoAliasAA, etc.)
   FAM.registerPass([&] { return PB.buildDefaultAAPipeline(); });
+  // TODO:: Try a different AliasAnalysis
+  // Register required alias analyses and memory dependence analysis
+  FAM.registerPass([] { return TargetLibraryAnalysis(); });
+  FAM.registerPass([] { return MemorySSAAnalysis(); });
 
   if (IR2Vec::test_writeDefs) {
     if (IR2Vec::printTime) {
