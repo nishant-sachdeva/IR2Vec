@@ -591,10 +591,18 @@ void _impl_collectLiveDefinitions_Walker(
       }
 
       if (auto *callInst = llvm::dyn_cast<llvm::CallInst>(defInst)) {
-        if (callInst->getCalledFunction()->isIntrinsic()) {
+        Function *callee = callInst->getCalledFunction();
+        if (!callee) {
+          IR2VEC_DEBUG(std::cout << "\t\t\t\t Null Callee" << std::endl);
+          RD.insert(targetMemLocation);
+          continue;
+        }
+        if (callee->isIntrinsic()) {
           IR2VEC_DEBUG(std::cout << "\t\t\t\t Internal Library Call"
                                  << std::endl);
-          worklist.push_back(MD->getDefiningAccess());
+          // worklist.push_back(MD->getDefiningAccess());
+          RD.insert(targetMemLocation);
+          continue;
         } else {
           IR2VEC_DEBUG(std::cout
                        << "\t\t\t\tSkip this instruction - it's a function call"
