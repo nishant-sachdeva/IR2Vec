@@ -25,6 +25,28 @@
 #include <llvm/Option/Option.h>
 #include "llvm/ADT/MapVector.h"
 
+#include <stdio.h>
+
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/MemoryLocation.h"
+#include "llvm/Analysis/MemorySSA.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include <llvm/Analysis/BasicAliasAnalysis.h>
+#include <llvm/Analysis/DependenceAnalysis.h>
+
+#include "llvm/IR/Instructions.h"
+#include <llvm/Analysis/MemoryDependenceAnalysis.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/Instruction.h>
+
+#include <llvm/IR/Module.h>
+#include <llvm/Passes/PassBuilder.h>
+#include <llvm/Support/raw_ostream.h>
+
+#include "llvm/Passes/PassPlugin.h"
+#include "llvm/Transforms/Scalar.h"
+
 
 #include <cxxabi.h>
 #include <time.h>
@@ -36,6 +58,7 @@
 #include <functional>
 #include <string>
 
+using namespace llvm;
 namespace IR2Vec {
 
 #define IR2VEC_DEBUG(X)                                                        \
@@ -47,6 +70,9 @@ namespace IR2Vec {
 
 using Vector = std::vector<double>;
 using VocabTy = std::map<std::string, Vector>;
+using MapTy =
+    llvm::SmallMapVector<const llvm::Instruction *,
+                         llvm::SmallVector<const llvm::Instruction *, 10>, 16>;
 using abi::__cxa_demangle;
 
 extern bool fa;
@@ -65,6 +91,76 @@ extern bool debug;
 extern bool test_writeDefs;
 extern bool test_reachingDefs;
 extern unsigned DIM;
+
+void _impl_collectLiveDefinitions_Walker(
+    MemoryAccess *DefAccess, Instruction *targetMemLocation, AAResults &AA,
+    SmallPtrSet<const Instruction *, 32> &RD, Instruction *rootInst,
+    MemorySSA &MSSA);
+
+void startCollectLiveDefinitions(MemoryAccess *StartAccess,
+                                 Instruction *targetMemLocation, AAResults &AA,
+                                 SmallPtrSet<const Instruction *, 32> &RD,
+                                 Instruction *rootInst, MemorySSA &MSSA);
+
+MemoryAccess* getStartAccess(Instruction *I, Instruction *memOperand,
+                             MemorySSA &MSSA);
+
+Instruction* getMemoryRoot(Instruction *memOperand);
+bool accessesSameMemoryLocation(Instruction *srcInst, Instruction *targetMem,
+                                AAResults &AA);
+
+void collectLiveDefinitions(Instruction *I, Instruction *memOperand,
+                            MemorySSA &MSSA, AAResults &AA,
+                            SmallPtrSet<const Instruction *, 32> &RD);
+
+void _impl_collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA,
+                                  AAResults &AA,
+                                  SmallPtrSet<const Instruction *, 32> *RD);
+
+void collectSSAReachingDefs(Instruction *I, MemorySSA &MSSA, AAResults &AA,
+                            IR2Vec::MapTy &resultMap);
+
+inline const llvm::Instruction* underlyingInst(const llvm::Instruction *I) {
+  const llvm::Value *Ptr = llvm::getPointerOperand(I);
+  if (!Ptr)
+    return nullptr;
+
+  if (const llvm::GetElementPtrInst *GEP = dyn_cast<llvm::GetElementPtrInst>(Ptr)) {
+    return GEP;
+  }
+
+  // Get the deepest object in the pointer chain
+  const llvm::Value *UnderlyingObj = llvm::getUnderlyingObject(Ptr);
+
+  // If it's an instruction, that's our base
+  if (const llvm::Instruction *BaseInst = dyn_cast<llvm::Instruction>(UnderlyingObj)) {
+    return BaseInst;
+  }
+
+  // Otherwise, if the original pointer was an instruction, use that
+  return dyn_cast<llvm::Instruction>(Ptr);
+}
+
+inline const llvm::Instruction* baseInstOf(const llvm::Instruction *I) {
+  if (isa<llvm::GetElementPtrInst>(I))
+    return I;
+
+  const llvm::Instruction *Base = underlyingInst(I);
+
+  // Keep going deeper only if we can actually go deeper
+  while (Base && Base->mayReadOrWriteMemory()) {
+    const Instruction *NextBase = underlyingInst(Base);
+    if (!NextBase || isa<llvm::GetElementPtrInst>(NextBase)) {
+      // Can't go deeper, stop here
+      break;
+    }
+    Base = NextBase;
+  }
+
+  return Base;
+}
+
+bool rejectInstCases(llvm::Instruction *I);
 std::unique_ptr<llvm::Module> getLLVMIR();
 void scaleVector(Vector &vec, float factor);
 // newly added

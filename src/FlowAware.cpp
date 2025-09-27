@@ -37,6 +37,60 @@
 using namespace llvm;
 using namespace IR2Vec;
 
+void IR2Vec_FA::collectSSAReachingDefs_wrapper(FunctionAnalysisManager &FAM, Module &M,
+                                    IR2Vec::MapTy &resultMap) {
+  // Run the pass on each function in the module
+  for (Function &F : M) {
+    if (!F.isDeclaration()) {
+      auto &AA = FAM.getResult<AAManager>(F);
+      MemorySSA &MSSA = FAM.getResult<MemorySSAAnalysis>(F).getMSSA();
+      MSSA.ensureOptimizedUses();
+
+      // AAManager::Result models AAResults
+      for (auto &BB : F) {
+        for (Instruction &inst : BB) {
+          IR2Vec::collectSSAReachingDefs(&inst, MSSA, AA, resultMap);
+        }
+      }
+    }
+  }
+}
+
+// SmallMapVector<const Instruction*, SmallVector<const Instruction*, 10>, 16>
+void IR2Vec_FA::collectMemssaRD(llvm::Module &M, IR2Vec::MapTy &resultMap) {
+  // std::cout << "Calling MemorySSA Functions" << std::endl;
+  PassBuilder PB;
+  FunctionAnalysisManager FAM;
+
+  // We need to initialize the other pass managers even if we don't directly use
+  // them
+  LoopAnalysisManager LAM;
+  CGSCCAnalysisManager CGAM;
+  ModuleAnalysisManager MAM;
+
+  // Register all the passes with the PassBuilder
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.registerFunctionAnalyses(FAM);
+
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // Install a proper AA stack (BasicAA + CFLAA + ScopedNoAliasAA, etc.)
+  FAM.registerPass([&] { return PB.buildDefaultAAPipeline(); });
+  // TODO:: Try a different AliasAnalysis
+  // Register required alias analyses and memory dependence analysis
+  FAM.registerPass([] { return TargetLibraryAnalysis(); });
+  FAM.registerPass([] { return MemorySSAAnalysis(); });
+
+  // if (IR2Vec::printTime) {
+  //   IR2Vec::timeFunction("SSA ReachingDefs map", [&]() {
+  //     collectSSAReachingDefs_wrapper(FAM, M, resultMap);
+  //   });
+  // } else
+    collectSSAReachingDefs_wrapper(FAM, M, resultMap);
+}
+
 void IR2Vec_FA::getTransitiveUse(
     const Instruction *root, const Instruction *def,
     SmallPtrSet<const Instruction *, 32> &visitedList,
@@ -132,10 +186,6 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
       SmallVector<Function *, 15> funcStack;
       auto tmp = func2Vec(f, funcStack);
       funcVecMap[&f] = tmp;
-    }
-
-    for (const auto& [key, value] : instReachingDefsMap) {
-      instReachingDefsMapStorage[key] = value;
     }
   }
   for (auto funcit : funcVecMap) {
@@ -348,6 +398,17 @@ Vector IR2Vec_FA::func2Vec(Function &F,
   funcStack.push_back(&F);
 
   instReachingDefsMap.clear();
+  // TODO:: for all instructions of this function F
+  // insert RD into instReachingDefsMap
+  for (auto &F : M) {
+    if (!F.isDeclaration()) {
+      for (auto &BB : F) {
+        for (auto &I : BB) {
+          auto it = instReachingDefsMapStorage.find(&I);
+          if (it != instReachingDefsMapStorage.end()) {
+            instReachingDefsMap[&I] = it->second;
+          }
+        }}}}
 
   allSCCs.clear();
   reverseReachingDefsMap.clear();
@@ -507,9 +568,12 @@ Vector IR2Vec_FA::func2Vec(Function &F,
         partialInstValMap[defs] = {};
         getPartialVec(*defs, partialInstValMap);
       }
+      IR2VEC_DEBUG(std::cout << "Loop finished" << std::endl);
 
-      if (!partialInstValMap.empty())
+      if (!partialInstValMap.empty()) {
+        IR2VEC_DEBUG(std::cout << "Going into SolveInsts" << std::endl);
         solveInsts(partialInstValMap);
+      }
     }
   }
 
@@ -702,6 +766,11 @@ bool isPotentiallyReachable(
 SmallVector<const Instruction *, 10>
 IR2Vec_FA::getReachingDefs(const Instruction *I, unsigned loc) {
   // std::cout << "\tChecking Inst " << printObject(I) << std::endl;
+  // TODO : if Instruction* I has reaching Defs in instReachingDefsMap
+  if (auto it = instReachingDefsMap.find(I); it != instReachingDefsMap.end()) {
+    IR2VEC_DEBUG(std::cout << "RD already calculated for Inst. Returning" << std::endl);
+    return it->second;
+  }
   IR2VEC_DEBUG(
       outs()
       << "Call to getReachingDefs Started****************************\n");
@@ -853,7 +922,7 @@ void IR2Vec_FA::getPartialVec(
     SmallMapVector<const Instruction *, Vector, 16> &partialInstValMap) {
 
   if (instVecMap.find(&I) != instVecMap.end()) {
-    IR2VEC_DEBUG(outs() << "Returning from inst2Vec() I found in Map\n");
+    IR2VEC_DEBUG(std::cout << "Returning from getPartialVec() I found in Map" << std::endl);
     return;
   }
 
@@ -987,7 +1056,6 @@ void IR2Vec_FA::solveInsts(
           if (isa<Instruction>(inst->getOperand(i))) {
             // std::cout << "Calling getReachingDefs from SolveInsts" << std::endl;
             auto RD = getReachingDefs(inst, i);
-            // TODO - Check and add this value to Reaching Defs
             for (auto i : RD) {
               // Check if value of RD is precomputed
               if (instVecMap.find(i) == instVecMap.end()) {
@@ -1048,6 +1116,8 @@ void IR2Vec_FA::solveInsts(
     }
   }
 
+  IR2VEC_DEBUG(std::cout << "Enumeration Done" << std::endl);
+
   for (unsigned i = 0; i < xI.size(); i++) {
     std::vector<double> tmp(xI.size(), 0);
     A.push_back(tmp);
@@ -1068,10 +1138,13 @@ void IR2Vec_FA::solveInsts(
       B[i][j] = (int)(B[i][j] * 10) / 10.0;
     }
   }
+  IR2VEC_DEBUG(std::cout << "Starting to Solve for C" << std::endl);
 
   auto C = solve(A, B);
   SmallMapVector<const BasicBlock *, SmallVector<const Instruction *, 10>, 16>
       bbInstMap;
+  IR2VEC_DEBUG(std::cout << "Solved For C Done" << std::endl);
+
 
   for (unsigned i = 0; i < C.size(); i++) {
     Vector tmp(C[i].begin(), C[i].end());
@@ -1102,6 +1175,7 @@ void IR2Vec_FA::solveInsts(
       }
     }
   }
+  IR2VEC_DEBUG(std::cout << "Solve Insts Done" << std::endl);
 }
 
 /*----------------------------------------------------------------------------------
@@ -1114,7 +1188,7 @@ void IR2Vec_FA::solveSingleComponent(
     SmallMapVector<const Instruction *, Vector, 16> &partialInstValMap) {
 
   if (instVecMap.find(&I) != instVecMap.end()) {
-    IR2VEC_DEBUG(outs() << "Returning from inst2Vec() I found in Map\n");
+    IR2VEC_DEBUG(outs() << "Returning from SSC() I found in Map\n");
     return;
   }
 

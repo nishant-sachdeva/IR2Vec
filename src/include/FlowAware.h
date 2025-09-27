@@ -134,6 +134,9 @@ private:
       llvm::SmallSet<const llvm::Function *, 16> &visitedFunctions);
 
   void updateFuncVecMapWithCallee(const llvm::Function *function);
+  void collectSSAReachingDefs_wrapper(FunctionAnalysisManager &FAM, Module &M,
+                                    IR2Vec::MapTy &resultMap);
+  void collectMemssaRD(llvm::Module &M, IR2Vec::MapTy &resultMap);
 
 public:
   IR2Vec_FA(llvm::Module &M, IR2Vec::VocabTy &vocab) : M{M}, vocabulary{vocab} {
@@ -150,6 +153,18 @@ public:
 
     dataMissCounter = 0;
     cyclicCounter = 0;
+
+    // TODO :: collect all reaching Defs here itself. 
+    // populate instReachingDefsMapStorage
+    if(IR2Vec::printTime) {
+      IR2Vec::timeFunction("MemSSA RD", [&]() {
+        collectMemssaRD(M,instReachingDefsMapStorage);
+      });
+    } else collectMemssaRD(M,instReachingDefsMapStorage);
+    
+    // IR2VEC_DEBUG(
+      std::cout << "Reaching Defs Ready Storage" << std::endl;
+    // );
 
     if(IR2Vec::printTime) {
       IR2Vec::timeFunction("Native collectWriteDefs map", [&]() {
