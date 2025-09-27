@@ -444,8 +444,10 @@ Vector IR2Vec_FA::func2Vec(Function &F,
           if (instReachingDefsMap.find(&I) == instReachingDefsMap.end()) {
             instReachingDefsMap[&I] = RD;
           } else {
-            auto RDList = instReachingDefsMap[&I];
-            RDList.insert(RDList.end(), RD.begin(), RD.end());
+            auto RDList = instReachingDefsMap[&I];  // Copy the vector
+            std::set<decltype(RD)::value_type> uniqueElements(RDList.begin(), RDList.end());
+            uniqueElements.insert(RD.begin(), RD.end());
+            RDList.assign(uniqueElements.begin(), uniqueElements.end());
             instReachingDefsMap[&I] = RDList;
           }
         }
