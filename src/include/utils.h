@@ -98,7 +98,7 @@ void print_write_defs_map(
 
 // Generic timing wrapper function
 template<typename Func>
-void timeFunction(const std::string& functionName, Func&& func) {
+double timeFunction(const std::string& functionName, Func&& func) {
   clock_t start = clock();
   
   // Execute the function
@@ -108,6 +108,7 @@ void timeFunction(const std::string& functionName, Func&& func) {
   double elapsed = double(end - start) / CLOCKS_PER_SEC;
   // Replace the printf lines with:
   std::cout << "Time taken by " << functionName << " is: " << elapsed << " seconds." << std::endl;
+  return elapsed;
 }
 } // namespace IR2Vec
 

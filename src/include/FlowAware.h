@@ -33,6 +33,10 @@ private:
   unsigned dataMissCounter;
   unsigned cyclicCounter;
 
+  clock_t startRDTimer, currentTimer;
+
+  double reachingDefsTime = 0.0;
+
   llvm::SmallDenseMap<llvm::StringRef, unsigned> memWriteOps;
   llvm::SmallDenseMap<const llvm::Instruction *, bool> livelinessMap;
   llvm::SmallDenseMap<llvm::StringRef, unsigned> memAccessOps;
@@ -152,9 +156,10 @@ public:
     cyclicCounter = 0;
 
     if(IR2Vec::printTime) {
-      IR2Vec::timeFunction("Native collectWriteDefs map", [&]() {
+      double elapsedWDtime = IR2Vec::timeFunction("Native collectWriteDefs map", [&]() {
         collectWriteDefsMap(M);
       });
+      reachingDefsTime += elapsedWDtime;
     } else collectWriteDefsMap(M);
 
     llvm::CallGraph cg = llvm::CallGraph(M);
@@ -216,6 +221,8 @@ public:
   }
 
   IR2Vec::Vector getProgramVector() { return pgmVector; }
+
+  double getReachingDefsTime() {return reachingDefsTime;}
 };
 
 #endif

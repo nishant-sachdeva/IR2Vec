@@ -970,6 +970,8 @@ void test_reachingdefs() {
   IR2Vec::debug = cl_debug;
 
   oldReachingDefs = FA.getInstReachingDefsMap();
+  double oldRDTime = FA.getReachingDefsTime();
+  if (IR2Vec::printTime) { std::cout << "Time taken by Old RD is: " << oldRDTime << " seconds." << std::endl;}
   IR2VEC_DEBUG(std::cout << "Native Reaching Defs ready" << std::endl);
   IR2VEC_DEBUG(for (auto &Inst
                     : oldReachingDefs) {

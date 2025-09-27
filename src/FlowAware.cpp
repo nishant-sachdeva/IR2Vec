@@ -130,6 +130,7 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
   for (auto &f : M) {
     if (!f.isDeclaration()) {
       SmallVector<Function *, 15> funcStack;
+      startRDTimer = clock();
       auto tmp = func2Vec(f, funcStack);
       funcVecMap[&f] = tmp;
     }
@@ -397,6 +398,9 @@ Vector IR2Vec_FA::func2Vec(Function &F,
   //   auto inst = Inst.first;
   //   printReachingDefs(inst, RD);
   // }
+  currentTimer = clock();
+  double RD_elapsed = double(currentTimer - startRDTimer) / CLOCKS_PER_SEC;
+  reachingDefsTime += RD_elapsed;
 
   // one time Reversing instReachingDefsMap to be used to calculate SCCs
   for (auto &I : instReachingDefsMap) {
