@@ -594,7 +594,7 @@ void _impl_collectLiveDefinitions_Walker(
         Function *callee = callInst->getCalledFunction();
         if (!callee) {
           IR2VEC_DEBUG(std::cout << "\t\t\t\t Null Callee" << std::endl);
-          RD.insert(targetMemLocation);
+          worklist.push_back(MD->getDefiningAccess());
           continue;
         }
         if (callee->isIntrinsic()) {
@@ -703,7 +703,7 @@ MemoryAccess *getStartAccess(Instruction *I, Instruction *memOperand,
                              MemorySSA &MSSA) {
   MemoryAccess *MA = MSSA.getMemoryAccess(I);
   if (MA) {
-    IR2VEC_DEBUG(std::cout << "\t\tNormal case: MemoryAccess exists"
+    IR2VEC_DEBUG(std::cout << "\t\tNormal case: MemoryAccess exists " << printObject(MA)
                            << std::endl);
     if (auto *MUOD = dyn_cast<MemoryUseOrDef>(MA)) {
       return MUOD->getDefiningAccess();
