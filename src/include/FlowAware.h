@@ -190,9 +190,10 @@ public:
         }
       }
     }
+
+    std::cout << "Call graph ready" << std::endl;
   }
 
-  void print_write_defs_map();
 
   void generateFlowAwareEncodings(std::ostream *o = nullptr,
                                   std::ostream *missCount = nullptr,

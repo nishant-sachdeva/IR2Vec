@@ -183,6 +183,7 @@ void IR2Vec_FA::generateFlowAwareEncodings(std::ostream *o,
 
   for (auto &f : M) {
     if (!f.isDeclaration()) {
+      std::cout << "Processing function: " << f.getName().str() << std::endl;
       SmallVector<Function *, 15> funcStack;
       auto tmp = func2Vec(f, funcStack);
       funcVecMap[&f] = tmp;
@@ -410,6 +411,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
           }
         }}}}
 
+  std::cout << "Collected Reaching Defs for function: " << F.getName().str() << std::endl;
+  
   allSCCs.clear();
   reverseReachingDefsMap.clear();
   SCCAdjList.clear();
@@ -435,6 +438,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
+  std::cout << "Kill map ready for function: " << F.getName().str() << std::endl;
+
   for (auto *b : RPOT) {
     for (auto &I : *b) {
       for (int i = 0; i < I.getNumOperands(); i++) {
@@ -454,6 +459,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
       }
     }
   }
+
+  std::cout << "Reaching defs map ready for function: " << F.getName().str() << std::endl;
 
   // for (auto &Inst: instReachingDefsMap) {
   //   auto RD = Inst.second;
@@ -477,6 +484,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
+  std::cout << "Reverse reaching defs map ready for function: " << F.getName().str() << std::endl;
+
   getAllSCC();
 
   std::sort(allSCCs.begin(), allSCCs.end(),
@@ -484,6 +493,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
                llvm::SmallVector<const llvm::Instruction *, 10> &b) {
               return a.size() < b.size();
             });
+
+  std::cout << "SCCs ready for function: " << F.getName().str() << std::endl;
 
   IR2VEC_DEBUG(int i = 0; for (auto &sets
                                : allSCCs) {
@@ -525,6 +536,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
+  std::cout << "Adjacency list ready for function: " << F.getName().str() << std::endl;
+
   IR2VEC_DEBUG(outs() << "\nAdjList:\n"; for (auto &nodes
                                               : SCCAdjList) {
     outs() << "Adjlist for: " << nodes.first << "\n";
@@ -544,6 +557,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     }
   }
 
+  std::cout << "New topo order for function: " << F.getName().str() << std::endl;
+
   IR2VEC_DEBUG(outs() << "New topo order: \n"; for (auto sets
                                                     : stack) {
     outs() << sets << " ";
@@ -556,6 +571,7 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     int idx = stack.back();
     stack.pop_back();
     auto component = allSCCs[idx];
+    // std::cout << "\tSolving component of size: " << component.size() << " for function: " << F.getName().str() << std::endl;
     SmallMapVector<const Instruction *, Vector, 16> partialInstValMap;
     if (component.size() == 1) {
       auto defs = component[0];
@@ -566,18 +582,26 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     } else {
       cyclicCounter++; // for components with length more than 1 will
                        // represent cycles
+      
+      std::cout << "Component of size more than 1 found, treating it as cycle for function: " << F.getName().str() << std::endl;         
       for (auto defs : component) {
         partialInstValMap[defs] = {};
         getPartialVec(*defs, partialInstValMap);
       }
+      std::cout << "Partial vectors ready for component of size: " 
+        << component.size() << " for function: " << F.getName().str() << std::endl;
       IR2VEC_DEBUG(std::cout << "Loop finished" << std::endl);
 
       if (!partialInstValMap.empty()) {
-        IR2VEC_DEBUG(std::cout << "Going into SolveInsts" << std::endl);
+        std::cout << "Going into SolveInsts" << std::endl;
         solveInsts(partialInstValMap);
       }
+
+      std::cout << "Solve Inst finished for component of size: " << component.size() << " for function: " << F.getName().str() << std::endl;
     }
   }
+
+  std::cout << "Solving components for function: " << F.getName().str() << std::endl;
 
   for (auto *b : RPOT) {
     bb2Vec(*b, funcStack);
@@ -604,6 +628,8 @@ Vector IR2Vec_FA::func2Vec(Function &F,
     std::transform(funcVector.begin(), funcVector.end(), bbVector.begin(),
                    funcVector.begin(), std::plus<double>());
   }
+
+  std::cout << "Function vector ready for function: " << F.getName().str() << std::endl;
 
   funcStack.pop_back();
   funcVecMap[&F] = funcVector;
@@ -1056,7 +1082,7 @@ void IR2Vec_FA::solveInsts(
           B.push_back(vec);
         } else {
           if (isa<Instruction>(inst->getOperand(i))) {
-            // std::cout << "Calling getReachingDefs from SolveInsts" << std::endl;
+            std::cout << "Calling getReachingDefs from SolveInsts" << std::endl;
             auto RD = getReachingDefs(inst, i);
             for (auto i : RD) {
               // Check if value of RD is precomputed
@@ -1118,12 +1144,13 @@ void IR2Vec_FA::solveInsts(
     }
   }
 
-  IR2VEC_DEBUG(std::cout << "Enumeration Done" << std::endl);
+  std::cout << "Enumeration Done" << std::endl;
 
   for (unsigned i = 0; i < xI.size(); i++) {
     std::vector<double> tmp(xI.size(), 0);
     A.push_back(tmp);
-  }
+  } // initializing A with 0s
+  std::cout << "Matrix A initialization with 0s" << std::endl;
 
   for (unsigned i = 0; i < xI.size(); i++) {
     A[i][i] = 1;
@@ -1134,18 +1161,41 @@ void IR2Vec_FA::solveInsts(
     }
   }
 
+  std::cout << "Matrix A initialization Done" << std::endl;
+
   for (unsigned i = 0; i < B.size(); i++) {
     auto Bvec = B[i];
     for (unsigned j = 0; j < B[i].size(); j++) {
       B[i][j] = (int)(B[i][j] * 10) / 10.0;
     }
   }
-  IR2VEC_DEBUG(std::cout << "Starting to Solve for C" << std::endl);
+
+  std::cout << "A rows: " << A.size() << std::endl;
+  std::cout << "A[0] cols: " << (A.empty() ? -1 : (int)A[0].size()) << std::endl;
+  std::cout << "B rows: " << B.size() << std::endl;
+  std::cout << "B[0] cols: " << (B.empty() ? -1 : (int)B[0].size()) << std::endl;
+
+  // Check for jagged rows
+  for (unsigned i = 0; i < A.size(); i++)
+    if (A[i].size() != A[0].size())
+      std::cout << "JAGGED A: row " << i << " has " << A[i].size() << " cols\n";
+  for (unsigned i = 0; i < B.size(); i++)
+    if (B[i].size() != B[0].size())
+      std::cout << "JAGGED B: row " << i << " has " << B[i].size() << " cols\n";
+
+  std::cout << "Starting to Solve for C" << std::endl;
+
+  if (xI.empty()) {
+    std::cout << "All instructions already solved, skipping solver"
+                           << std::endl;
+    return;
+  }
 
   auto C = solve(A, B);
+  std::cout << "Solved For C Done" << std::endl;
+
   SmallMapVector<const BasicBlock *, SmallVector<const Instruction *, 10>, 16>
       bbInstMap;
-  IR2VEC_DEBUG(std::cout << "Solved For C Done" << std::endl);
 
 
   for (unsigned i = 0; i < C.size(); i++) {

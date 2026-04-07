@@ -470,9 +470,9 @@ void test_reachingdefs() {
     return;
   }
 
-  llvm::SmallMapVector<const llvm::Instruction *,
-                       llvm::SmallVector<const llvm::Instruction *, 10>, 16>
-      oldReachingDefs;
+  // llvm::SmallMapVector<const llvm::Instruction *,
+  //                      llvm::SmallVector<const llvm::Instruction *, 10>, 16>
+  //     oldReachingDefs;
   auto vocabulary = VocabularyFactory::createVocabulary(DIM)->getVocabulary();
 
   IR2Vec_FA FA(*M, vocabulary);
@@ -481,8 +481,12 @@ void test_reachingdefs() {
   missCount.open("missCount_" + oname, std::ios_base::app);
   cyclicCount.open("cyclicCount_" + oname, std::ios_base::app);
   // IR2Vec::debug = false;
+
+  std::cout << "Generating Flow-Aware Encodings" << std::endl;
   FA.generateFlowAwareEncodings(&o, &missCount, &cyclicCount);
   o.close();
+
+  std::cout << "Flow-Aware Encodings generated" << std::endl;
   // IR2Vec::debug = cl_debug;
 
   // oldReachingDefs = FA.getInstReachingDefsMap();
